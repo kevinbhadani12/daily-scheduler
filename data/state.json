@@ -2,7 +2,7 @@
   "business": {
     "date": "2026-10-20",
     "status": "failed",
-    "attempts": 2,
-    "error": "No API key was provided. Please pass a valid API key. Learn how to create an API key at https://ai.google.dev/gemini-api/docs/api-key."
+    "attempts": 3,
+    "error": "Gemini quota exceeded. Google Search only works on a paid key: open aistudio.google.com, turn on billing for this API key's project, then try again. (If billing is already on, you hit a rate limit; wait a few minutes.)"
   }
 }
