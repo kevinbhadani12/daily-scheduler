@@ -1,8 +1,0 @@
-{
-  "business": {
-    "date": "2026-10-20",
-    "status": "failed",
-    "attempts": 5,
-    "error": "Gemini quota exceeded. Google Search only works on a paid key: open aistudio.google.com, turn on billing for this API key's project, then try again. (If billing is already on, you hit a rate limit; wait a few minutes.)"
-  }
-}
