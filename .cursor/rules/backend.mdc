@@ -1,0 +1,16 @@
+---
+description: Rules for the app server, storage and scheduler
+globs: app.py, scheduler/db.py, scheduler/jobs.py, scheduler/web.py, scheduler/notify.py
+alwaysApply: false
+---
+
+- Must run anywhere with only Python or Docker: SQLite in `DATA_DIR`, an in-process scheduler thread, Waitress.
+  Don't add external services (Redis, Postgres, cron, cloud queues) or GitHub-based deploys.
+- All validation lives in `db.py` (`validate_briefing`, `validate_settings`) and raises `ValidationError`
+  with a beginner-friendly message. The API returns it as `{"error": ...}` with status 400.
+- Every dashboard/API route uses `login_required` (which checks CSRF on non-GET). `/b/<token>`, `/healthz` and
+  `/setup` are the only public routes.
+- Secrets: read with `db.get_secret` (env wins). Never return, log or put them in exception text.
+- Schema changes need a migration for existing `app.db` files (users upgrade in place).
+- Scheduling rules are in AGENTS.md rule 4. `tests/test_jobs.py` covers them, so keep it passing.
+- After changes run `.venv/bin/python -m pytest` and, for API/UI changes, `.venv/bin/python qa/e2e.py`.

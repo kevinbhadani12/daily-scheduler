@@ -5,17 +5,18 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from scheduler import linkcheck, render, store  # noqa: E402
+from scheduler import db, linkcheck  # noqa: E402
+
+ENV_VARS = ["PUBLIC_URL", "ADMIN_PASSWORD", "COOKIE_SECURE"] + [name.upper() for name in db.SECRETS]
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def sandbox(tmp_path, monkeypatch):
-    """Send every file the app writes into a temp folder and fake the link checker,
-    so tests never touch the real docs/ and data/ folders or the internet."""
-    monkeypatch.setattr(store, "DATA_DIR", tmp_path / "data")
-    monkeypatch.setattr(store, "HISTORY_DIR", tmp_path / "data" / "history")
-    monkeypatch.setattr(store, "STATE_FILE", tmp_path / "data" / "state.json")
-    monkeypatch.setattr(store, "OUTBOX_FILE", tmp_path / ".outbox.json")
-    monkeypatch.setattr(render, "DOCS_DIR", tmp_path / "docs")
+    """Every test gets its own empty database, no real keys, and a fake link checker,
+    so tests never touch real data, the network or paid APIs."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
+    for name in ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(linkcheck, "_is_dead", lambda url: "dead" in url)
+    db.init()
     return tmp_path

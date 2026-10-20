@@ -1,18 +1,15 @@
 ---
-description: Rules for the settings dashboard (single-file HTML/JS that edits config.yaml through the GitHub API)
-globs: docs/dashboard.html
+description: Rules for the dashboard (single-file HTML/JS served by the app)
+globs: scheduler/static/dashboard.html
 alwaysApply: false
 ---
 
-- Single self-contained file, with no build step and no framework. Keep it that way.
-- Build DOM only with the `h()` helper and `textContent`. Never use `innerHTML` with data from the repo or the user.
-- External scripts only from cdnjs, with an exact version and an `integrity` (SRI) hash. If you change the version,
-  recompute the hash (`tests/test_dashboard.py` checks it).
-- The GitHub token lives only in `localStorage` (wrapped in try/catch) and is sent only to `api.github.com`.
-- `normalize()` reads config.yaml and `toYaml()` writes it. Every config field must round-trip exactly.
-  Quote strings with `q()` (e.g. country `NO` must not become `false`).
-  If you add a config field, also update `scheduler/config.py`, `config.yaml`, README and tests (AGENTS.md rule 1).
-- `MODELS` / `EFFORTS` must match what `scheduler/config.py` and `scheduler/generator.py` accept.
-- Everything the user reads must be plain, beginner-friendly English. Errors must say what to do next.
-- Must work at phone width (no horizontal scroll) and in dark mode (CSS variables in `:root`).
-- After changes run `.venv/bin/python -m pytest tests/test_dashboard.py`.
+- One self-contained file: vanilla JS, no framework, no build step, **no CDN scripts** (the app must work offline/anywhere).
+- Talk only to the app's own `/api/*` with the `api()` helper. It sends the `X-CSRF-Token` header from the
+  `<meta name="csrf">` tag (the server replaces `__CSRF__`).
+- Build DOM only with `h()` and `textContent`. **Never use `innerHTML`** with server or user data.
+- Never put secret values in the page. The API only returns `secrets[name] = {set, from_env, hint}`.
+- Choice lists (models, efforts, days, channels) come from `/api/state`. Don't hard-code them.
+- Text must be plain, beginner-friendly English, and errors must say what to do next.
+- Must work at phone width (no sideways scroll) and in dark mode (CSS variables in `:root`).
+- After changes run `.venv/bin/python qa/e2e.py` and look at `qa/screenshots/`.

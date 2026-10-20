@@ -1,8 +1,8 @@
 .env
 .venv/
 __pycache__/
-preview/
-.outbox.json
-.DS_Store
 .pytest_cache/
+data/
+preview/
 qa/screenshots/
+.DS_Store

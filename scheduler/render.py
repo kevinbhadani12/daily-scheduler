@@ -4,14 +4,9 @@ from __future__ import annotations
 import html
 import math
 import re
-from pathlib import Path
 
 import markdown as md
 import nh3
-
-from .config import ROOT
-
-DOCS_DIR = ROOT / "docs"
 
 STYLE = """
 :root { --bg:#fbfaf7; --card:#ffffff; --text:#1d1d1f; --muted:#6b6b70; --line:#e6e3dc;
@@ -61,7 +56,7 @@ PAGE = """<!doctype html>
 <style>__STYLE__</style>
 </head>
 <body>
-<header><div class="bar"><a href="__HOME__">← All briefings</a><span>__NAV__</span></div></header>
+<header><div class="bar"><a href="__HOME__">__HOMELABEL__</a><span>__NAV__</span></div></header>
 <main>
 __BODY__
 </main>
@@ -70,8 +65,9 @@ __BODY__
 """
 
 
-def _page(title: str, body: str, home: str, nav: str = "") -> str:
+def page(title: str, body: str, home: str = "/dashboard", nav: str = "", home_label: str = "← Dashboard") -> str:
     return (PAGE.replace("__TITLE__", html.escape(title))
+                .replace("__HOMELABEL__", html.escape(home_label))
                 .replace("__STYLE__", STYLE)
                 .replace("__HOME__", home)
                 .replace("__NAV__", html.escape(nav))
@@ -86,17 +82,8 @@ def markdown_to_html(text: str) -> str:
     return re.sub(r'<a href="(https?://)', r'<a target="_blank" href="\1', clean)
 
 
-def page_path(briefing_id: str, date: str) -> Path:
-    return DOCS_DIR / briefing_id / f"{date}.html"
-
-
-def page_url(site_url: str, briefing_id: str, date: str) -> str:
-    return f"{site_url}/{briefing_id}/{date}.html"
-
-
-def write_briefing_page(path: Path, name: str, date_label: str, markdown_text: str, model: str) -> None:
-    words = len(markdown_text.split())
-    minutes = max(1, math.ceil(words / 200))
+def briefing_page(name: str, date_label: str, markdown_text: str, model: str) -> str:
+    minutes = max(1, math.ceil(len(markdown_text.split()) / 200))
     body = (
         markdown_to_html(markdown_text)
         + f'<footer>{html.escape(name)} · {html.escape(date_label)} · about {minutes} min read<br>'
@@ -104,28 +91,4 @@ def write_briefing_page(path: Path, name: str, date_label: str, markdown_text: s
         + "</footer>"
     )
     body = body.replace("</h1>", f'</h1><p class="meta">{html.escape(date_label)} · {minutes} min read</p>', 1)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(_page(f"{name} – {date_label}", body, "../index.html", name), encoding="utf-8")
-
-
-def write_index(history: dict[str, list[dict]], names: dict[str, str]) -> None:
-    entries = []
-    for briefing_id, items in history.items():
-        for item in items:
-            entries.append((item["date"], briefing_id, item))
-    entries.sort(key=lambda e: e[0], reverse=True)
-
-    rows = []
-    for date, briefing_id, item in entries[:200]:
-        rows.append(
-            f'<a href="{html.escape(briefing_id)}/{html.escape(date)}.html">'
-            f'<div class="name">{html.escape(names.get(briefing_id, briefing_id))}</div>'
-            f'<div><strong>{html.escape(item.get("title", ""))}</strong></div>'
-            f'<div class="date">{html.escape(date)}</div></a>'
-        )
-    body = '<p style="text-align:right"><a href="dashboard.html">⚙️ Settings</a></p><h1>Your Daily Briefings</h1>' + (
-        f'<div class="list">{"".join(rows)}</div>' if rows else "<p>No briefings yet.</p>"
-    )
-    DOCS_DIR.mkdir(parents=True, exist_ok=True)
-    (DOCS_DIR / ".nojekyll").touch()
-    (DOCS_DIR / "index.html").write_text(_page("Daily Briefings", body, "index.html"), encoding="utf-8")
+    return page(f"{name} – {date_label}", body, nav=name)

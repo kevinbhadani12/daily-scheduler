@@ -5,94 +5,99 @@ These rules apply to every assistant working in this repo (Claude Code, Cursor, 
 
 ## What this project is
 
-The app writes AI briefings (business news, stock market, …) on a schedule and sends the link by Telegram and email.
-The **reader is a beginner**. Everything they see (briefings, notifications, error messages, dashboard, README)
-must be in simple, short, plain English.
+One self-hosted app that writes AI briefings on a schedule and sends the link by Telegram and email.
+It must **run anywhere** (laptop, Raspberry Pi, VPS, Docker platforms) with **no external setup** other than
+the user's own API keys. **Don't add dependencies on GitHub, cloud services or extra servers** (no Redis,
+no Postgres, no cron, no CI deploys).
+The **reader is a beginner**. Everything they see (briefings, messages, errors, dashboard, README) must be in
+simple, short, plain English.
 
 ```
-GitHub Actions (every 15 min) → main.py generate → Gemini + Google Search → Markdown
-  → linkcheck marks dead links → render.py (sanitized HTML) → docs/<id>/<date>.html
-  → git push (GitHub Pages) → main.py notify → Telegram + email with the link
-docs/dashboard.html → GitHub API → edits config.yaml and briefings/*.md
+app.py ─┬─ web.py (Flask, served by Waitress)
+        │    /setup /login /dashboard  /api/*  (password + CSRF)      /b/<token> (public secret link)
+        └─ jobs.py scheduler thread (every 30 s) → is_due → run_briefing
+               → generator.py (Gemini + Google Search) → linkcheck → render → db.save_issue
+               → notify.py (Telegram + email with PUBLIC_URL/b/<token>)
+db.py: SQLite in DATA_DIR/app.db: settings, secrets, briefings, runs, issues
 ```
 
 | Path | Role |
 |---|---|
-| `config.yaml` | Schedule and settings (times, days, channels, model, effort) |
-| `briefings/*.md` | One plain-English prompt per briefing |
-| `main.py` | CLI: `generate`, `notify`, `preview`, `test-notify`, `list` |
-| `scheduler/config.py` | Loads and **validates** `config.yaml` |
+| `app.py` | Entry point and CLI: serve (default), `list`, `run`, `reset-password`, `add` |
+| `scheduler/db.py` | Schema, settings, secrets, briefings, runs, issues, **all validation**, `MODELS`/`EFFORTS` |
+| `scheduler/jobs.py` | `is_due`, `run_briefing`, retries, scheduler loop |
+| `scheduler/web.py` | Flask app: setup, login, dashboard, JSON API, briefing pages |
+| `scheduler/static/dashboard.html` | Single-file dashboard (vanilla JS, no build step, no CDN) |
 | `scheduler/generator.py` | Gemini call, system prompt, `<summary_json>` parsing |
-| `scheduler/linkcheck.py` | Marks source links that don't open |
-| `scheduler/render.py` | Markdown → sanitized HTML pages and `docs/index.html` |
-| `scheduler/notify.py` | Telegram and Gmail senders |
-| `scheduler/store.py` | `data/history/*.json`, `data/state.json`, `.outbox.json` |
-| `docs/dashboard.html` | Single-file settings dashboard (no build step) |
-| `.github/workflows/daily.yml` | Schedule: generate → commit/push → notify |
-| `tests/` | pytest suite. Fakes Gemini, network and file paths |
+| `scheduler/notify.py` | Telegram and Gmail senders (read keys via `db.get_secret`) |
+| `scheduler/render.py` / `linkcheck.py` | Sanitized HTML pages / dead-link marking |
+| `briefings/*.md` | Starter prompts, imported once on first start |
+| `Dockerfile`, `docker-compose.yml` | Container deploy (data volume at `/data`) |
+| `tests/` | pytest suite. Fakes Gemini, network and data folder |
+| `qa/e2e.py` | Real app + real Chrome, fake Gemini/Telegram/email |
 
 ## Commands
 
 ```bash
 uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r requirements-dev.txt   # setup
-.venv/bin/python -m pytest          # run ALL tests (no API key or cost needed)
-.venv/bin/python main.py list       # check config.yaml loads and see the schedule
+.venv/bin/python -m pytest          # all unit/integration tests (no keys, no cost)
+.venv/bin/python qa/e2e.py          # full browser test (needs Google Chrome), screenshots in qa/screenshots/
+DATA_DIR=/tmp/ds .venv/bin/python app.py    # run locally with a throwaway database
 ```
-`main.py preview <id>`, `generate` and `test-notify` call paid APIs or send real messages.
-**Ask the user before running them.**
+`app.py run <id>` and the dashboard's Run now / Send test message call paid APIs or send real messages.
+**Ask the user before using them with real keys.** Never use the user's real `data/` folder for experiments.
 
 ## Rules
 
-### 1. Keep things in sync (most common source of bugs)
-Some facts live in several places. When you change one, update all of them in the same change:
-
-- **Config fields** (a new setting, renamed key, new allowed value):
-  `scheduler/config.py` (parse + validate) · `docs/dashboard.html` (`normalize`, `toYaml`, `validate`, UI) ·
-  `config.yaml` (with a comment) · `README.md` · `tests/test_config.py`.
-- **Models / effort levels**: `config.py` `EFFORTS`, `generator.py` `THINKING_LEVELS`,
-  dashboard `MODELS` / `EFFORTS`, `config.yaml` comments, README cost notes.
-- **Secrets / env vars**: `.github/workflows/daily.yml` `env:`, `.env.example`, README secrets table, `notify.py`/`generator.py`.
-- **Summary contract**: `SYSTEM_PROMPT` asks for `<summary_json>` with `title, highlights, mood, headlines`.
-  `_split_summary`, `main.py` (history/outbox) and `notify.py` read those keys. Change all of them together.
+### 1. Keep things in sync
+- **Lists of choices live in `db.py` only** (`MODELS`, `EFFORTS`, `ALL_DAYS`, `CHANNELS`). The dashboard gets
+  them from `/api/state`. Never hard-code them in `dashboard.html`. `generator.THINKING_LEVELS` must have a key
+  for every `EFFORTS` value.
+- **New setting**: `db.DEFAULT_SETTINGS` + `db.validate_settings` + dashboard General settings + README + tests.
+- **New briefing field**: `Briefing` dataclass + `SCHEMA` (add a migration for existing databases) +
+  `validate_briefing` + `save_briefings`/`_row_to_briefing` + dashboard card + tests.
+- **New secret**: `db.SECRETS` + dashboard `CONNECTIONS` + `.env.example` + README key table.
+- **Summary contract**: `SYSTEM_PROMPT` asks for `<summary_json>` (`title, highlights, mood, headlines`).
+  `_split_summary`, `jobs._run` and `notify.py` use those keys. Change them together.
 
 ### 2. Gemini API
-- Use the official `google-genai` SDK: `genai.Client()` + `client.models.generate_content(...)`.
-  Key comes from `GEMINI_API_KEY`.
-- **Never guess SDK names or model IDs.** Check the installed SDK
-  (`.venv/bin/python -c "from google.genai import types; print(types.X.model_fields)"`) or the official docs
-  at ai.google.dev. Models change often, so confirm an ID exists before using it.
-- Tools: `google_search` + `url_context`. Grounding needs a paid (billing-enabled) key.
-- Never show `part.thought` text to the reader. The SDK auto-resumes `CONTINUATION` responses, so don't add a manual loop.
-- Turn API failures into `GenerationError` with a message that tells a beginner what to do.
+- Official `google-genai` SDK: `genai.Client(api_key=...)` + `client.models.generate_content(...)`.
+  The key comes from `db.get_secret("gemini_api_key")` (env `GEMINI_API_KEY` wins).
+- **Never guess SDK names or model IDs.** Inspect the installed SDK or check ai.google.dev first.
+- Tools: `google_search` + `url_context`. Grounding needs a billing-enabled key (a 429 means billing is off).
+- Never show `part.thought` text. The SDK auto-resumes `CONTINUATION`, so don't add a manual loop.
+- Every failure becomes a `GenerationError` that tells a beginner what to do.
 
-### 3. Safety and security
-- Never commit secrets. `.env` (root or `scheduler/`) is git-ignored. Never print or log key values.
-- AI output is untrusted. It's rendered only through `render.markdown_to_html` (nh3 sanitizer). Don't bypass it.
-- `docs/dashboard.html`: build DOM with the `h()` helper / `textContent`. **Never `innerHTML` with repo or user data.**
-  External scripts only from cdnjs with an **exact version + `integrity` (SRI) hash**. The GitHub token stays in
-  `localStorage` only, so never send it anywhere except `api.github.com`.
-- The workflow passes `workflow_dispatch` inputs through `env:`, never by interpolating `${{ }}` into shell code.
+### 3. Security (the app may be on the public internet)
+- Dashboard and `/api/*` need login. Every non-GET API call needs the `X-CSRF-Token` header (`login_required`).
+- First-time setup needs the one-time code printed in the log. Keep that.
+- Secrets: never return them from the API (only `secret_status`), never log them, and never put them in
+  exception text. Telegram URLs contain the token, so wrap `requests` errors.
+- AI output is untrusted. Render only through `render.markdown_to_html` (nh3). Briefing pages send a strict CSP.
+- Dashboard: build DOM with `h()` / `textContent`. **Never `innerHTML`** with server or user data.
+- Briefing links use `secrets.token_urlsafe`. Never switch to guessable ids.
 
-### 4. Workflow behaviour (don't break these)
-- Order is **generate → commit/push → notify**, so links work when the message arrives.
-- Checkout uses the default branch (latest commit) and `git pull --rebase` before push (the dashboard may commit meanwhile).
-- `data/` and `docs/<id>/` are written by the bot. Don't hand-edit them. `docs/dashboard.html` is hand-written.
-- A briefing is tried at most `MAX_ATTEMPTS` per day. Only the last failure sends a "failed" message.
+### 4. Scheduling behaviour (don't break these)
+- `is_due`: enabled, day selected, within `[time, time + CATCH_UP]`, not running, no scheduled success today,
+  fewer than `MAX_ATTEMPTS` failures, `RETRY_AFTER` since the last failure. Manual runs don't count.
+- Only the last failed scheduled try (or any failed Run now) sends a "failed" message.
+- `db.init()` marks leftover `running` runs as failed. One app instance only (documented in README).
 
 ### 5. Code style
-- Python 3.12 in CI. Keep `from __future__ import annotations` at the top of modules. Stdlib + `requirements.txt` only.
+- Python 3.10+ (CI/Docker use 3.12). `from __future__ import annotations` at the top of modules.
 - Match existing style: small functions, short docstrings, few comments, friendly error text.
-- Tests must never touch the real `docs/`, `data/`, network or APIs. Use the `sandbox` fixture and `tests/fakes.py`.
-- New dependency → `requirements.txt` (runtime) or `requirements-dev.txt` (tests only).
+- Tests use the autouse `sandbox` fixture (temp `DATA_DIR`, no env keys, fake link checker) and `tests/fakes.py`.
+  Never call real APIs in tests.
+- Runtime dependency → `requirements.txt`. Test-only → `requirements-dev.txt`. Keep the dependency list small.
 
-### 6. Writing briefing prompts (`briefings/*.md`)
-Plain English instructions to the AI. Include: what to cover, how many items, structure per item,
-beginner-friendly language rules, "only real sources with links, never invent facts", and target reading time.
-Output format (Markdown, `<summary_json>`) is handled by `SYSTEM_PROMPT`. Don't repeat it in prompt files.
+### 6. Writing briefing prompts
+Plain-English instructions, written for a beginner reader: what to cover and how many items, the structure for
+each item, simple-language rules, "only real recent facts from reliable sources, link every source, never invent
+facts", education-not-advice wording for money or health, and a target reading time. Don't describe the output
+format: `SYSTEM_PROMPT` adds it. Users edit prompts in the dashboard. `briefings/*.md` are only first-start seeds.
 
 ## Definition of done
-1. `.venv/bin/python -m pytest` passes. Add or adjust tests for the behaviour you changed.
-2. `.venv/bin/python main.py list` runs without a config error.
-3. Everything in rule 1 that your change touches is updated.
-4. README updated if the user would do anything differently.
-5. Tell the user what you could **not** verify (e.g. real Gemini call, real Telegram send, dashboard in a browser).
+1. `.venv/bin/python -m pytest` passes, with tests added or updated for the changed behaviour.
+2. UI or API change → `.venv/bin/python qa/e2e.py` passes, and you've looked at the screenshots.
+3. Rule 1 items your change touches are updated, and the README is updated if the user would act differently.
+4. Tell the user what you could **not** verify (real Gemini call, real Telegram/email, Docker build, hosting).

@@ -1,47 +1,31 @@
 ---
 name: add-briefing
-description: Add a new scheduled briefing (e.g. "send me AI news every evening"). Creates the prompt file, adds it to config.yaml, and checks it loads. Use when the user wants a new daily/weekly update on a topic.
+description: Add a new scheduled briefing (e.g. "send me AI news every evening"). Writes a good beginner-friendly prompt and adds it to the app. Use when the user wants a new daily/weekly update on a topic.
 ---
 
 # Add a briefing
 
+Users normally add briefings in the dashboard (**+ Add briefing**). Use this skill when they ask you to do it,
+or want help writing a good prompt.
+
 1. **Collect the details.** Ask only for what's missing, and suggest defaults:
-   - Topic and what it should cover (who it's for: a beginner unless told otherwise)
-   - Name (shown in messages), time (`"HH:MM"`, 24-hour, in the `timezone` from `config.yaml`)
-   - Days: `daily`, `weekdays`, or a list like `[mon, wed, fri]`
-   - Channels: `[telegram, email]` (default both)
+   - Topic and what it should cover (the reader is a beginner unless told otherwise)
+   - Name, time (`HH:MM`, 24-hour, in the app's timezone), days (`daily`, `weekdays`, or `mon,wed,fri`)
+   - Channels: `telegram,email` (default both)
    - Length: a short read (4–5 min) or a deep read (10–15 min)
 
-2. **Pick an id**: lowercase letters, numbers and dashes (e.g. `ai-news`). It must be unique in `config.yaml`.
+2. **Write the prompt** following AGENTS.md rule 6. Use `briefings/stock-market.md` (short) or
+   `briefings/business.md` (deep) as the model. Save it as `briefings/<id>.md`. The id uses lowercase letters,
+   numbers and dashes.
 
-3. **Write `briefings/<id>.md`** following AGENTS.md rule 6. Use `briefings/stock-market.md` as the model for a
-   short briefing and `briefings/business.md` for a deep one. Always include:
-   - what to cover and how many items
-   - simple language rules (short sentences, expand abbreviations, everyday examples, rupee values when relevant)
-   - "only real, recent information from reliable sources; link every source; never invent facts or numbers"
-   - education-not-advice wording for finance or health topics
-   - target reading time
+3. **Add it to the app**:
+   - If the user runs the app on this machine (`data/app.db` exists, or they say so), run:
+     `.venv/bin/python app.py add <id> --name "<Name>" --prompt-file briefings/<id>.md --time HH:MM --days daily --deliver telegram,email`
+     If Docker or a server is used, give them this command, or tell them to paste the prompt in the dashboard.
+   - The app doesn't need a restart. The scheduler reads briefings from the database on every check.
 
-   Don't describe the output format (Markdown or `<summary_json>`). The system prompt handles that.
+4. **Check it**: `.venv/bin/python app.py list` shows the new briefing.
 
-4. **Add a block to `config.yaml`** under `briefings:`, in the same style as the existing ones:
-   ```yaml
-     - id: ai-news
-       name: AI News
-       prompt_file: briefings/ai-news.md
-       time: "19:00"
-       days: daily
-       deliver: [telegram, email]
-       enabled: true
-   ```
-   Only add `model:` / `effort:` if the user wants something different from `defaults`.
-
-5. **Check it**:
-   ```bash
-   .venv/bin/python main.py list
-   .venv/bin/python -m pytest
-   ```
-
-6. **Tell the user**: what was added, when it will first arrive, that it can be changed from the dashboard,
-   and that they can test it now with **Actions → Daily briefings → Run workflow → `<id>`**.
-   Running it costs a little Gemini credit. Don't run `main.py preview` yourself without asking.
+5. **Tell the user**: what was added, when it will first arrive, that they can change it in the dashboard,
+   and that **▶ Run now** sends one immediately (uses a little Gemini credit). Don't press it yourself
+   without asking.

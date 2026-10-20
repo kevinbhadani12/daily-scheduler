@@ -4,16 +4,14 @@ globs: scheduler/generator.py
 alwaysApply: false
 ---
 
-- Use only the official `google-genai` SDK: `genai.Client()` and `client.models.generate_content(...)`.
-  The key comes from `GEMINI_API_KEY`.
-- Never guess SDK class/field names or model IDs. Inspect the installed SDK
-  (`.venv/bin/python -c "from google.genai import types; print(list(types.GenerateContentConfig.model_fields))"`)
-  or check ai.google.dev before using them.
-- Tools are `google_search` and `url_context`. Depth is controlled with `thinking_config.thinking_level`,
-  mapped from the config `effort` through `THINKING_LEVELS`.
-- Never include `part.thought` text in the briefing. The SDK auto-resumes `CONTINUATION`, so don't add a manual loop.
-- `SYSTEM_PROMPT` defines the `<summary_json>` contract (`title, highlights, mood, headlines`). `main.py` and
-  `scheduler/notify.py` depend on it. Change them together.
-- Every failure must become a `GenerationError` with a beginner-friendly message.
-- After changes run `.venv/bin/python -m pytest tests/test_generator.py tests/test_pipeline.py`.
-  Don't make real API calls without asking the user, because they cost money.
+- Use only the official `google-genai` SDK: `genai.Client(api_key=...)` + `client.models.generate_content(...)`.
+  `jobs.py` passes the key from `db.get_secret("gemini_api_key")`.
+- Never guess SDK class/field names or model IDs. Inspect the installed SDK or check ai.google.dev first.
+- Tools: `google_search` + `url_context`. Depth: `thinking_config.thinking_level` from `THINKING_LEVELS[effort]`.
+  Keep `THINKING_LEVELS` keys equal to `db.EFFORTS`.
+- Never include `part.thought` text. The SDK auto-resumes `CONTINUATION`, so don't add a manual loop.
+- `SYSTEM_PROMPT` defines `<summary_json>` (`title, highlights, mood, headlines`), which `jobs.py` and `notify.py`
+  use. Change them together.
+- Every failure becomes a `GenerationError` with a beginner-friendly fix (429 → turn on billing).
+- After changes run `.venv/bin/python -m pytest tests/test_generator.py tests/test_jobs.py`.
+  No real API calls without asking the user.

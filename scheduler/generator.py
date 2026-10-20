@@ -9,7 +9,7 @@ from datetime import datetime
 from google import genai
 from google.genai import errors, types
 
-from .config import Briefing
+from .db import Briefing
 
 THINKING_LEVELS = {
     "minimal": types.ThinkingLevel.MINIMAL,
@@ -60,7 +60,7 @@ class Result:
 
 
 def _user_message(briefing: Briefing, previous: list[dict]) -> str:
-    lines = [briefing.prompt(), "", "---", "Already covered in recent briefings:"]
+    lines = [briefing.prompt, "", "---", "Already covered in recent briefings:"]
     if not previous:
         lines.append("(nothing yet, this is the first briefing)")
     for entry in previous:
@@ -98,8 +98,10 @@ def _usage(response: types.GenerateContentResponse) -> dict:
     return usage
 
 
-def generate(briefing: Briefing, now: datetime, country: str | None, previous: list[dict]) -> Result:
-    client = genai.Client(  # reads GEMINI_API_KEY from the environment
+def generate(briefing: Briefing, now: datetime, country: str | None, previous: list[dict], *,
+             model: str, effort: str, api_key: str) -> Result:
+    client = genai.Client(
+        api_key=api_key,
         http_options=types.HttpOptions(
             timeout=15 * 60 * 1000,  # milliseconds; deep research can take several minutes
             retry_options=types.HttpRetryOptions(attempts=3),
@@ -117,13 +119,13 @@ def generate(briefing: Briefing, now: datetime, country: str | None, previous: l
             types.Tool(google_search=types.GoogleSearch()),
             types.Tool(url_context=types.UrlContext()),
         ],
-        thinking_config=types.ThinkingConfig(thinking_level=THINKING_LEVELS[briefing.effort]),
+        thinking_config=types.ThinkingConfig(thinking_level=THINKING_LEVELS[effort]),
     )
 
     try:
         # The SDK automatically resumes long answers (finish reason CONTINUATION) and merges them
         response = client.models.generate_content(
-            model=briefing.model,
+            model=model,
             contents=_user_message(briefing, previous),
             config=config,
         )
@@ -134,7 +136,8 @@ def generate(briefing: Briefing, now: datetime, country: str | None, previous: l
                 "turn on billing for this API key's project, then try again. (If billing is already on, "
                 "you hit a rate limit; wait a few minutes.)") from exc
         if exc.code in (400, 401, 403) and "key" in (exc.message or "").lower():
-            raise GenerationError(f"Your GEMINI_API_KEY was not accepted: {exc.message}") from exc
+            raise GenerationError(f"Your Gemini API key was not accepted ({exc.message}). "
+                                  "Paste a new key in the dashboard under Connections.") from exc
         raise GenerationError(f"Gemini rejected the request ({exc.code}): {exc.message}") from exc
     except errors.ServerError as exc:
         raise GenerationError(f"Gemini server error ({exc.code}), try again later: {exc.message}") from exc

@@ -1,6 +1,6 @@
 ---
 name: verify
-description: Check that everything in the daily-scheduler project still works after a change. Runs the test suite and config check, and confirms the files that must stay in sync really are. Use before saying any change is done, or when the user asks "is everything OK?".
+description: Check that everything in the daily-scheduler project still works after a change. Runs the tests, the full browser test, a live start of the app, and sync/security checks. Use before saying any change is done, or when the user asks "is everything OK?".
 ---
 
 # Verify the project
@@ -10,32 +10,32 @@ Run every step and report each result. Don't stop at the first failure.
 1. **Environment**: create `.venv` if it's missing:
    `uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r requirements-dev.txt`
 
-2. **Tests**: `.venv/bin/python -m pytest`
-   These cover config validation, Gemini response handling (faked), the full generate pipeline, retries and failure
-   messages, notifications, and the dashboard's save format (runs its JavaScript in Node).
-   Note any **skipped** tests and why (e.g. no Node or no internet).
+2. **Tests**: `.venv/bin/python -m pytest`. Covers storage and validation, scheduling and retries,
+   making and sending briefings (with Gemini faked), login/setup/CSRF, the API, secret handling and Gemini errors.
 
-3. **Config**: `.venv/bin/python main.py list` must print the schedule without "Problem in config.yaml".
+3. **Browser test** (needs Google Chrome): `.venv/bin/python qa/e2e.py`
+   Starts the real app with fake Gemini/Telegram/email and clicks through setup, keys, test message, editing,
+   adding, deleting, Run now, the briefing link, log out/in and an XSS check. **Look at the screenshots**
+   in `qa/screenshots/` for layout problems (phone and desktop, light and dark).
 
-3b. **Dashboard in a real browser** (needs Google Chrome): `.venv/bin/python qa/dashboard_e2e.py`
-   It clicks through connect, edit, add, delete, save, Run now, reload and an XSS check against a fake GitHub API,
-   then saves screenshots in `qa/screenshots/`. Look at them for layout problems.
+4. **Live start** with a throwaway database:
+   `DATA_DIR=$(mktemp -d) PORT=8799 .venv/bin/python app.py`, run in the background.
+   Then `curl -s localhost:8799/healthz` should return `{"ok":true}`, and `/dashboard` should redirect to `/setup`.
+   The log should show the setup code. Stop it afterwards.
 
-4. **Sync checks** (AGENTS.md rule 1). For each item, compare the places and fix any mismatch:
-   - Secrets: the names under `env:` in `.github/workflows/daily.yml` match `.env.example` and the README secrets table.
-     Check with `grep -ho "[A-Z_]*_\(KEY\|TOKEN\|ID\|ADDRESS\|PASSWORD\|TO\)\b" .github/workflows/daily.yml .env.example README.md | sort | uniq -c`
-   - Effort levels: `EFFORTS` in `scheduler/config.py` = keys of `THINKING_LEVELS` in `scheduler/generator.py`
-     = `EFFORTS` in `docs/dashboard.html`.
-   - Every `prompt_file` in `config.yaml` exists, and no file in `briefings/` is left unused (unused files are only a warning).
-   - The model IDs in `config.yaml` appear in the dashboard `MODELS` list.
+5. **Sync checks** (AGENTS.md rule 1):
+   - `THINKING_LEVELS` in `scheduler/generator.py` has every value of `db.EFFORTS`:
+     `.venv/bin/python -c "from scheduler import db, generator; print(set(dict(db.EFFORTS)) - set(generator.THINKING_LEVELS) or 'ok')"`
+   - Every `db.SECRETS` name appears in `dashboard.html` `CONNECTIONS` (except smtp_*), `.env.example` and the README.
+   - `dashboard.html` doesn't hard-code models or efforts (they come from `/api/state`).
 
-5. **Safety scan**:
-   - `git status --short` shows no `.env`, `.outbox.json`, `preview/` or `.venv/`.
-   - `grep -n "innerHTML" docs/dashboard.html` finds nothing.
-   - `grep -rn "AIza\|github_pat_\|sk-ant-" --exclude-dir=.venv .` finds no real-looking keys (placeholders in `.env.example` are fine).
+6. **Safety scan**:
+   - `grep -n "innerHTML" scheduler/static/dashboard.html` finds nothing.
+   - `git status --short` shows no `data/`, `.env`, `qa/screenshots/` or `.venv/`.
+   - `grep -rnE "AIza[0-9A-Za-z_-]{20,}|[0-9]{8,10}:[A-Za-z0-9_-]{30,}" --exclude-dir=.venv --exclude-dir=.git .` finds no real keys.
 
-6. **Report** in short, simple sentences:
+7. **Report** in short, simple sentences:
    - ✅ what passed
    - ❌ what failed and what you fixed (or what the user must do)
-   - ⚠️ what can't be checked here: a real Gemini call (needs the key and costs credit), real Telegram/email delivery,
-     GitHub Actions and Pages in the cloud, and the dashboard in a real browser.
+   - ⚠️ what can't be checked here: a real Gemini call (needs billing and costs credit), real Telegram/email,
+     a Docker build if Docker isn't installed, and hosting on the user's server.

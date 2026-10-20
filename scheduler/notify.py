@@ -2,27 +2,34 @@
 from __future__ import annotations
 
 import html
-import os
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 import requests
 
+from . import db
+
 
 class NotifyError(Exception):
     pass
 
 
-def _env(name: str) -> str:
-    value = os.environ.get(name, "").strip()
+LABELS = {
+    "telegram_bot_token": "Telegram bot token", "telegram_chat_id": "Telegram chat id",
+    "email_address": "Gmail address", "email_app_password": "Gmail app password",
+}
+
+
+def _secret(name: str) -> str:
+    value = db.get_secret(name)
     if not value:
-        raise NotifyError(f"Missing setting {name}. Add it to GitHub Secrets (or your .env file).")
+        raise NotifyError(f"{LABELS.get(name, name)} is missing. Add it in the dashboard under Connections.")
     return value
 
 
 def send_telegram(item: dict) -> None:
-    token, chat_id = _env("TELEGRAM_BOT_TOKEN"), _env("TELEGRAM_CHAT_ID")
+    token, chat_id = _secret("telegram_bot_token"), _secret("telegram_chat_id")
     e = html.escape
 
     if item["kind"] == "failure":
@@ -40,13 +47,18 @@ def send_telegram(item: dict) -> None:
         lines.append(f'👉 <a href="{e(item["url"])}">Read the full briefing</a>')
         text = "\n".join(lines)
 
-    resp = requests.post(
-        f"https://api.telegram.org/bot{token}/sendMessage",
-        json={"chat_id": chat_id, "text": text[:4000], "parse_mode": "HTML"},
-        timeout=30,
-    )
+    try:
+        resp = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": text[:4000], "parse_mode": "HTML"},
+            timeout=30,
+        )
+    except requests.RequestException:
+        # The error text would contain the URL, which includes the bot token
+        raise NotifyError("Could not reach Telegram. Check the server's internet connection.") from None
     if not resp.ok:
-        raise NotifyError(f"Telegram error {resp.status_code}: {resp.text[:300]}")
+        hint = " Check the bot token and chat id, and send your bot a message first." if resp.status_code in (400, 401, 403, 404) else ""
+        raise NotifyError(f"Telegram error {resp.status_code}: {resp.text[:200]}.{hint}")
 
 
 def _email_html(item: dict) -> str:
@@ -71,10 +83,10 @@ def _email_html(item: dict) -> str:
 
 
 def send_email(item: dict) -> None:
-    sender, password = _env("EMAIL_ADDRESS"), _env("EMAIL_APP_PASSWORD")
-    recipients = [r.strip() for r in os.environ.get("EMAIL_TO", sender).split(",") if r.strip()]
-    host = os.environ.get("SMTP_HOST", "smtp.gmail.com")
-    port = int(os.environ.get("SMTP_PORT", "465"))
+    sender, password = _secret("email_address"), _secret("email_app_password")
+    recipients = [r.strip() for r in (db.get_secret("email_to") or sender).split(",") if r.strip()]
+    host = db.get_secret("smtp_host") or "smtp.gmail.com"
+    port = int(db.get_secret("smtp_port") or "465")
 
     if item["kind"] == "failure":
         subject = f"⚠️ {item['name']} failed today"
@@ -96,7 +108,8 @@ def send_email(item: dict) -> None:
             smtp.login(sender, password)
             smtp.sendmail(sender, recipients, msg.as_string())
     except (smtplib.SMTPException, OSError) as exc:
-        raise NotifyError(f"Email error: {exc}") from exc
+        hint = " Check the Gmail address and app password." if isinstance(exc, smtplib.SMTPAuthenticationError) else ""
+        raise NotifyError(f"Email error: {exc}.{hint}") from exc
 
 
 SENDERS = {"telegram": send_telegram, "email": send_email}

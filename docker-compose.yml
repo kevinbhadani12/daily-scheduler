@@ -1,0 +1,13 @@
+services:
+  daily-scheduler:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/data          # your briefings, settings and keys live here (back this folder up)
+    environment:
+      - TZ=Asia/Kolkata
+      # Optional – you can also set all of these in the dashboard:
+      # - PUBLIC_URL=https://briefings.example.com
+      # - GEMINI_API_KEY=...

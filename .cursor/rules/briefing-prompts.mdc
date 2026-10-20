@@ -1,13 +1,13 @@
 ---
-description: How to write or edit briefing prompt files
+description: How to write or edit briefing prompts
 globs: briefings/*.md
 alwaysApply: false
 ---
 
-- These files are plain-English instructions to the AI, written for a **beginner** reader.
+- Prompts are plain-English instructions to the AI, written for a **beginner** reader. Users edit them in the
+  dashboard. The files in `briefings/` are only imported once, on the first start.
 - Include: what to cover and how many items, the structure for each item, simple-language rules (short sentences,
   expand abbreviations, everyday and rupee examples), "only real recent facts from reliable sources, link every
   source, never invent numbers or quotes", education-not-advice wording for money or health, and a target reading time.
-- Don't describe the output format (Markdown headings, `<summary_json>`). `SYSTEM_PROMPT` in
-  `scheduler/generator.py` adds that automatically.
-- A new prompt file needs a matching entry in `config.yaml` (see `.cursor/commands/add-briefing.md`).
+- Don't describe the output format (Markdown, `<summary_json>`). `SYSTEM_PROMPT` adds it.
+- To add one to a running app, see `.cursor/commands/add-briefing.md`.

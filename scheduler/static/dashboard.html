@@ -1,0 +1,448 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<meta name="csrf" content="__CSRF__">
+<title>Daily Scheduler</title>
+<style>
+:root { --bg:#fbfaf7; --card:#ffffff; --text:#1d1d1f; --muted:#6b6b70; --line:#e6e3dc;
+        --accent:#0b6e4f; --accent-soft:#e3f2ec; --field:#f4f2ed; --danger:#b42318; --danger-soft:#fdecea;
+        --warn:#8a5a00; --warn-soft:#fff4dc; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#141416; --card:#1c1c1f; --text:#ececee; --muted:#a0a0a8; --line:#2e2e33;
+          --accent:#5fd3a6; --accent-soft:#1d332b; --field:#26262b; --danger:#ff8a80; --danger-soft:#3a1d1b;
+          --warn:#f5c56b; --warn-soft:#3a2f17; }
+}
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--text);
+       font:16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+header { background:var(--card); border-bottom:1px solid var(--line); }
+.bar { max-width:860px; margin:0 auto; padding:14px 16px; display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.bar h1 { font-size:18px; margin:0; }
+main { max-width:860px; margin:0 auto; padding:20px 16px 120px; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px; margin:0 0 16px; }
+.card h2 { font-size:16px; margin:0 0 12px; }
+h2.section { font-size:18px; margin:0; }
+.muted { color:var(--muted); font-size:14px; }
+label { display:block; font-size:13px; font-weight:600; color:var(--muted); margin:0 0 4px; }
+input[type=text], input[type=password], input[type=time], input[type=number], select, textarea {
+  width:100%; font:inherit; color:var(--text); background:var(--field); border:1px solid var(--line);
+  border-radius:8px; padding:9px 11px; }
+input:disabled { opacity:0.7; }
+textarea { min-height:260px; font-size:14px; line-height:1.5; resize:vertical; }
+input:focus, select:focus, textarea:focus { outline:2px solid var(--accent); outline-offset:1px; }
+.grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:14px; margin-bottom:14px; }
+.row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.between { justify-content:space-between; }
+button { font:inherit; font-size:14px; font-weight:600; border-radius:8px; padding:8px 14px; cursor:pointer;
+         border:1px solid var(--line); background:var(--card); color:var(--text); }
+button.primary { background:var(--accent); border-color:var(--accent); color:var(--card); }
+button.danger { color:var(--danger); }
+button.link { border:0; background:none; color:var(--accent); padding:4px 0; }
+button:disabled { opacity:0.5; cursor:default; }
+.chip { display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border:1px solid var(--line);
+        border-radius:999px; font-size:14px; cursor:pointer; user-select:none; background:var(--card); }
+.chip input { margin:0; }
+.chip.on { background:var(--accent-soft); border-color:var(--accent); }
+.b-head { display:flex; align-items:center; gap:12px; cursor:pointer; }
+.b-head .info { flex:1; min-width:0; }
+.b-head .name { font-weight:650; overflow-wrap:anywhere; }
+.b-head .sub { color:var(--muted); font-size:14px; }
+.b-body { margin-top:16px; padding-top:16px; border-top:1px solid var(--line); }
+.switch { position:relative; width:44px; height:26px; flex:none; }
+.switch input { opacity:0; width:0; height:0; }
+.switch span { position:absolute; inset:0; background:var(--line); border-radius:999px; transition:0.15s; }
+.switch span::before { content:""; position:absolute; width:20px; height:20px; left:3px; top:3px;
+                       background:var(--card); border-radius:50%; transition:0.15s; }
+.switch input:checked + span { background:var(--accent); }
+.switch input:checked + span::before { transform:translateX(18px); }
+.notice { padding:10px 14px; border-radius:8px; margin:0 0 16px; font-size:14px; }
+.notice.error { background:var(--danger-soft); color:var(--danger); }
+.notice.ok { background:var(--accent-soft); color:var(--accent); }
+.notice.warn { background:var(--warn-soft); color:var(--warn); }
+.list { list-style:none; margin:0; padding:0; }
+.list li { padding:9px 0; border-top:1px solid var(--line); font-size:14px; }
+.list li:first-child { border-top:none; }
+.list a { color:var(--accent); font-weight:600; text-decoration:none; }
+.list .err { color:var(--danger); font-size:13px; margin-top:2px; overflow-wrap:anywhere; }
+.check { list-style:none; padding:0; margin:0; }
+.check li { padding:4px 0; font-size:15px; }
+.savebar { position:fixed; left:0; right:0; bottom:0; background:var(--card); border-top:1px solid var(--line);
+           padding:12px 16px; display:none; }
+.savebar .inner { max-width:860px; margin:0 auto; display:flex; justify-content:space-between; align-items:center; gap:12px; }
+.savebar.show { display:block; }
+.hidden { display:none !important; }
+</style>
+</head>
+<body>
+<header><div class="bar">
+  <h1>☀️ Daily Scheduler</h1>
+  <form method="post" action="/logout"><input type="hidden" name="csrf" id="logout-csrf"><button class="link">Log out</button></form>
+</div></header>
+<main id="main">
+  <div id="notice"></div>
+
+  <section class="card hidden" id="checklist">
+    <h2>Finish setting up</h2>
+    <ul class="check" id="check-items"></ul>
+  </section>
+
+  <section class="card">
+    <div class="row between"><h2 style="margin:0">Latest briefings</h2><button id="refresh">Refresh</button></div>
+    <ul class="list" id="issues" style="margin-top:8px"></ul>
+  </section>
+
+  <section class="card">
+    <h2>Recent activity</h2>
+    <ul class="list" id="runs"></ul>
+  </section>
+
+  <div class="row between" style="margin:24px 0 10px">
+    <h2 class="section">Your briefings</h2>
+    <button id="add">+ Add briefing</button>
+  </div>
+  <div id="briefings"></div>
+
+  <section class="card" style="margin-top:24px" id="connections">
+    <h2>Connections</h2>
+    <p class="muted">Keys are stored only on this server. Saved keys are never shown again. Leave a box empty to keep the saved one.</p>
+    <div id="conn-fields"></div>
+    <div class="row" style="margin-top:6px">
+      <button class="primary" id="save-conn">Save connections</button>
+      <button id="test">Send test message</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>General settings</h2>
+    <div class="grid">
+      <div><label for="g-timezone">Timezone</label><input type="text" id="g-timezone" list="tz-list"></div>
+      <div><label for="g-country">Country code</label><input type="text" id="g-country" maxlength="2"></div>
+      <div><label for="g-history_days">Remember stories for (days)</label><input type="number" id="g-history_days" min="1" max="60"></div>
+    </div>
+    <div class="grid">
+      <div><label for="g-default_model">Default AI model</label><select id="g-default_model"></select></div>
+      <div><label for="g-default_effort">Default thinking effort</label><select id="g-default_effort"></select></div>
+    </div>
+    <label for="g-public_url">Public address of this app (used in the links you receive)</label>
+    <input type="text" id="g-public_url" placeholder="https://briefings.example.com">
+  </section>
+</main>
+
+<div class="savebar" id="savebar"><div class="inner">
+  <span>You have unsaved changes</span>
+  <div class="row"><button id="discard">Discard</button><button class="primary" id="save">Save changes</button></div>
+</div></div>
+
+<datalist id="tz-list">
+  <option value="Asia/Kolkata"><option value="Asia/Dubai"><option value="Asia/Singapore"><option value="Asia/Tokyo">
+  <option value="Europe/London"><option value="Europe/Berlin"><option value="America/New_York">
+  <option value="America/Chicago"><option value="America/Los_Angeles"><option value="Australia/Sydney"><option value="UTC">
+</datalist>
+
+<script>
+"use strict";
+const CSRF = document.querySelector('meta[name="csrf"]').content;
+const DAY_LABEL = { mon: "Mon", tue: "Tue", wed: "Wed", thu: "Thu", fri: "Fri", sat: "Sat", sun: "Sun" };
+const GENERAL = ["timezone", "country", "history_days", "default_model", "default_effort", "public_url"];
+const CONNECTIONS = [
+  ["gemini_api_key", "Gemini API key", "password", "From aistudio.google.com/apikey (billing must be on)"],
+  ["telegram_bot_token", "Telegram bot token", "password", "From @BotFather"],
+  ["telegram_chat_id", "Telegram chat id", "text", "Your chat number"],
+  ["email_address", "Gmail address", "text", "you@gmail.com"],
+  ["email_app_password", "Gmail app password", "password", "16-letter app password"],
+  ["email_to", "Send emails to (optional)", "text", "Defaults to your Gmail address"],
+];
+
+let server = null;   // last /api/state
+let cfg = null;      // {settings, briefings} being edited
+let open = new Set();
+let dirty = false;
+let pollTimer = null;
+
+// ── helpers ──────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+function h(tag, attrs = {}, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") el.className = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else if (k in el && typeof v !== "string") el[k] = v;
+    else el.setAttribute(k, v);
+  }
+  for (const kid of kids.flat()) if (kid != null) el.append(kid);
+  return el;
+}
+function notice(text, kind = "ok") {
+  $("notice").replaceChildren(text ? h("div", { class: `notice ${kind}` }, text) : "");
+  if (text) window.scrollTo({ top: 0, behavior: "smooth" });
+}
+function setDirty(v = true) { dirty = v; $("savebar").classList.toggle("show", v); }
+const clone = (x) => JSON.parse(JSON.stringify(x));
+
+async function api(path, method = "GET", body) {
+  const res = await fetch(path, {
+    method, cache: "no-store", credentials: "same-origin",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": CSRF },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (res.status === 401) { location.href = "/login"; throw new Error("Please log in again."); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Server error ${res.status}`);
+  return data;
+}
+
+function nextRun(b) {
+  if (!b.enabled) return "Off";
+  if (!b.days.length) return "No days selected";
+  let parts;
+  try {
+    parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: cfg.settings.timezone, weekday: "short",
+      hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date()).map((p) => [p.type, p.value]));
+  } catch { return "Unknown timezone"; }
+  const days = server.days, today = days.indexOf(parts.weekday.toLowerCase().slice(0, 3));
+  const nowHM = `${parts.hour}:${parts.minute}`;
+  for (let d = 0; d <= 7; d++) {
+    const day = days[(today + d) % 7];
+    if (b.days.includes(day) && (d > 0 || b.time > nowHM))
+      return `Next: ${d === 0 ? "today" : d === 1 ? "tomorrow" : DAY_LABEL[day]} at ${b.time}`;
+  }
+  return "";
+}
+function daysLabel(list) {
+  if (list.length === 7) return "Every day";
+  if (list.join() === server.days.slice(0, 5).join()) return "Mon–Fri";
+  return list.map((d) => DAY_LABEL[d]).join(", ") || "No days";
+}
+function when(iso) {
+  return iso ? new Date(iso).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
+}
+function select(options, value, onchange, extra) {
+  const opts = extra ? [extra, ...options] : options;
+  const all = opts.some(([v]) => v === value) ? opts : [...opts, [value, `${value} (not supported)`]];
+  return h("select", { onchange: (e) => onchange(e.target.value) },
+    all.map(([v, label]) => h("option", { value: v, selected: v === value }, label)));
+}
+
+// ── rendering ────────────────────────────────────────────────
+function renderChecklist() {
+  const s = server.secrets, items = [];
+  const has = (k) => s[k].set;
+  items.push([has("gemini_api_key"), "Add your Gemini API key (Connections below)"]);
+  items.push([has("telegram_bot_token") && has("telegram_chat_id"), "Connect Telegram (bot token + chat id)"]);
+  items.push([has("email_address") && has("email_app_password"), "Connect Gmail (address + app password)"]);
+  const local = /\/\/(localhost|127\.|0\.0\.0\.0|192\.168\.|10\.)/.test(server.public_url);
+  items.push([!local, "Links use a local address, so they only open on this network. Set a public address in General settings when you host it online."]);
+  const missing = items.filter(([ok]) => !ok);
+  $("checklist").classList.toggle("hidden", !missing.length);
+  $("check-items").replaceChildren(...items.map(([ok, text]) => h("li", {}, `${ok ? "✅" : "⬜"} ${text}`)));
+}
+
+function renderActivity() {
+  const issues = server.issues;
+  $("issues").replaceChildren(...(issues.length ? issues.slice(0, 10).map((i) =>
+    h("li", {}, h("a", { href: `/b/${i.token}`, target: "_blank", rel: "noopener" }, i.title || i.briefing_name),
+      h("div", { class: "muted" }, `${i.briefing_name} · ${when(i.created_at)}`)))
+    : [h("li", { class: "muted" }, "No briefings yet. Press ▶ Run now on a briefing to make your first one.")]));
+
+  const runs = server.runs;
+  $("runs").replaceChildren(...(runs.length ? runs.map((r) => {
+    const icon = r.status === "running" ? "⏳ Working…" : r.status === "done" ? "✅" : "❌";
+    return h("li", {},
+      h("div", {}, `${icon} ${r.briefing_name} · ${r.trigger === "manual" ? "Run now" : "Scheduled"} · ${when(r.started_at)}`),
+      r.error ? h("div", { class: "err" }, r.status === "done" ? `Made, but sending had a problem: ${r.error}` : r.error) : null);
+  }) : [h("li", { class: "muted" }, "Nothing has run yet.")]));
+}
+
+function briefingCard(b, index) {
+  const isOpen = open.has(b.id);
+  const update = (fn) => { fn(); setDirty(); renderBriefings(); };
+
+  const head = h("div", { class: "b-head", onclick: (e) => {
+      if (e.target.closest(".switch, button")) return;
+      isOpen ? open.delete(b.id) : open.add(b.id);
+      renderBriefings();
+    } },
+    h("label", { class: "switch", title: b.enabled ? "On" : "Off" },
+      h("input", { type: "checkbox", checked: b.enabled, onchange: (e) => update(() => { b.enabled = e.target.checked; }) }),
+      h("span")),
+    h("div", { class: "info" },
+      h("div", { class: "name" }, b.name || "(no name)"),
+      h("div", { class: "sub" }, `${b.time} · ${daysLabel(b.days)} · ${b.deliver.map((x) => x[0].toUpperCase() + x.slice(1)).join(" + ") || "Not sent"} · ${nextRun(b)}`)),
+    h("button", { onclick: () => runNow(b) }, "▶ Run now"),
+    h("span", { class: "muted" }, isOpen ? "▲" : "▼"));
+  if (!isOpen) return h("section", { class: "card" }, head);
+
+  const chips = (all, chosen, labels, set) => h("div", { class: "row" }, ...all.map((v) =>
+    h("label", { class: `chip ${chosen.includes(v) ? "on" : ""}` },
+      h("input", { type: "checkbox", checked: chosen.includes(v),
+                   onchange: (e) => update(() => set(e.target.checked ? [...chosen, v] : chosen.filter((x) => x !== v))) }),
+      labels[v])));
+  const textarea = h("textarea", { placeholder: "Write what this briefing should cover, in plain English…",
+                                   oninput: (e) => { b.prompt = e.target.value; setDirty(); } });
+  textarea.value = b.prompt;
+
+  return h("section", { class: "card" }, head,
+    h("div", { class: "b-body" },
+      h("div", { class: "grid" },
+        h("div", {}, h("label", {}, "Name"),
+          h("input", { type: "text", value: b.name, onchange: (e) => update(() => { b.name = e.target.value.trim(); }) })),
+        h("div", {}, h("label", {}, "Send time"),
+          h("input", { type: "time", value: b.time, onchange: (e) => update(() => { b.time = e.target.value; }) }))),
+      h("label", {}, "Days"),
+      h("div", { class: "row" },
+        chips(server.days, b.days, DAY_LABEL, (v) => { b.days = server.days.filter((d) => v.includes(d)); }),
+        h("button", { onclick: () => update(() => { b.days = [...server.days]; }) }, "Every day"),
+        h("button", { onclick: () => update(() => { b.days = server.days.slice(0, 5); }) }, "Mon–Fri")),
+      h("div", { style: "height:14px" }),
+      h("label", {}, "Send the link to"),
+      chips(server.channels, b.deliver, { telegram: "📱 Telegram", email: "📧 Email" }, (v) => { b.deliver = v; }),
+      h("div", { style: "height:14px" }),
+      h("div", { class: "grid" },
+        h("div", {}, h("label", {}, "AI model"),
+          select(server.models, b.model, (v) => update(() => { b.model = v; }), ["", `Default (${cfg.settings.default_model})`])),
+        h("div", {}, h("label", {}, "Thinking effort"),
+          select(server.efforts, b.effort, (v) => update(() => { b.effort = v; }), ["", `Default (${cfg.settings.default_effort})`]))),
+      h("label", {}, "What should this briefing contain?"), textarea,
+      h("div", { class: "row between", style: "margin-top:10px" },
+        h("span", { class: "muted" }, `Briefing id: ${b.id}`),
+        h("button", { class: "danger", onclick: () => removeBriefing(index) }, "Delete briefing"))));
+}
+function renderBriefings() { $("briefings").replaceChildren(...cfg.briefings.map(briefingCard)); }
+
+function renderGeneral() {
+  for (const k of ["timezone", "country", "history_days", "public_url"]) $(`g-${k}`).value = cfg.settings[k];
+  for (const [k, opts] of [["default_model", server.models], ["default_effort", server.efforts]]) {
+    const el = select(opts, cfg.settings[k], (v) => { cfg.settings[k] = v; setDirty(); renderBriefings(); });
+    el.id = `g-${k}`;
+    $(`g-${k}`).replaceWith(el);
+  }
+}
+
+function renderConnections() {
+  $("conn-fields").replaceChildren(h("div", { class: "grid" }, ...CONNECTIONS.map(([key, label, type, hint]) => {
+    const st = server.secrets[key];
+    const placeholder = st.from_env ? "Set by the server (environment variable)"
+      : st.set ? `Saved ✓ ${st.hint || "(hidden)"}` : hint;
+    return h("div", {}, h("label", { for: `c-${key}` }, label),
+      h("input", { id: `c-${key}`, type, placeholder, disabled: st.from_env, autocomplete: "off" }));
+  })));
+}
+
+function renderAll() { renderChecklist(); renderActivity(); renderBriefings(); renderGeneral(); renderConnections(); }
+
+// ── data ─────────────────────────────────────────────────────
+let loadSeq = 0;
+async function load(keepEdits = false) {
+  const seq = ++loadSeq;
+  const state = await api("/api/state");
+  if (seq !== loadSeq) return;   // a newer refresh already started; don't show older data over it
+  server = state;
+  if (!keepEdits || !cfg) {
+    cfg = { settings: clone(server.settings), briefings: clone(server.briefings) };
+    cfg.settings.public_url = server.public_url;
+    setDirty(false);
+    renderAll();
+  } else {
+    renderChecklist(); renderActivity();
+  }
+  const busy = server.runs.some((r) => r.status === "running");
+  clearTimeout(pollTimer);
+  if (busy) pollTimer = setTimeout(() => load(true).catch(() => {}), 8000);
+}
+
+function readGeneral() {
+  for (const k of ["timezone", "country", "history_days", "public_url"]) cfg.settings[k] = $(`g-${k}`).value.trim();
+}
+
+async function save() {
+  readGeneral();
+  const btn = $("save");
+  btn.disabled = true; btn.textContent = "Saving…";
+  $("main").inert = true;
+  try {
+    await api("/api/settings", "PUT", { settings: cfg.settings });
+    await api("/api/briefings", "PUT", { briefings: cfg.briefings });
+    await load();
+    notice("Saved ✅ Changes are used right away.", "ok");
+  } catch (e) {
+    notice(`Not saved: ${e.message}`, "error");
+  } finally {
+    btn.disabled = false; btn.textContent = "Save changes";
+    $("main").inert = false;
+  }
+}
+
+async function saveConnections() {
+  const secrets = {};
+  for (const [key] of CONNECTIONS) {
+    const el = $(`c-${key}`);
+    if (el.value.trim()) secrets[key] = el.value.trim();
+  }
+  if (!Object.keys(secrets).length) { notice("Type at least one key or setting first.", "warn"); return; }
+  try {
+    readGeneral();
+    await api("/api/settings", "PUT", { settings: { ...server.settings, public_url: server.public_url }, secrets });
+    await load(dirty);
+    renderConnections();
+    notice("Connections saved ✅ Press “Send test message” to check them.", "ok");
+  } catch (e) { notice(`Not saved: ${e.message}`, "error"); }
+}
+
+async function testNotify() {
+  const btn = $("test");
+  btn.disabled = true; btn.textContent = "Sending…";
+  try {
+    const { results } = await api("/api/test-notify", "POST", {});
+    const lines = Object.entries(results).map(([ch, r]) => `${ch === "telegram" ? "Telegram" : "Email"}: ${r === "ok" ? "✅ sent" : `❌ ${r}`}`);
+    notice(lines.join("  ·  "), Object.values(results).every((r) => r === "ok") ? "ok" : "warn");
+  } catch (e) { notice(`Test failed: ${e.message}`, "error"); }
+  finally { btn.disabled = false; btn.textContent = "Send test message"; }
+}
+
+function addBriefing() {
+  const name = prompt("Name of the new briefing (e.g. \"AI & Tech News\")");
+  if (!name) return;
+  let id = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "briefing";
+  while (cfg.briefings.some((b) => b.id === id)) id = `${id}-2`;
+  cfg.briefings.push({ id, name: name.trim(), prompt: "", time: "08:00", days: [...server.days],
+                       deliver: [...server.channels], enabled: true, model: "", effort: "" });
+  open.add(id);
+  setDirty();
+  renderBriefings();
+}
+
+function removeBriefing(index) {
+  const b = cfg.briefings[index];
+  if (!confirm(`Delete "${b.name}"? Briefings it already made stay available.`)) return;
+  cfg.briefings.splice(index, 1);
+  setDirty();
+  renderBriefings();
+}
+
+async function runNow(b) {
+  if (dirty) { notice("Save your changes first, then press Run now.", "warn"); return; }
+  if (!confirm(`Make "${b.name}" now and send it? (Uses a little AI credit.)`)) return;
+  try {
+    await api(`/api/briefings/${encodeURIComponent(b.id)}/run`, "POST", {});
+    notice(`Started "${b.name}". It usually takes 2–10 minutes. You'll get the link on Telegram/email.`, "ok");
+    await load(true);
+  } catch (e) { notice(e.message, "error"); }
+}
+
+// ── start ────────────────────────────────────────────────────
+$("logout-csrf").value = CSRF;
+$("add").onclick = addBriefing;
+$("save").onclick = save;
+$("discard").onclick = () => { load().then(() => notice("")); };
+$("refresh").onclick = () => load(true).catch((e) => notice(e.message, "error"));
+$("save-conn").onclick = saveConnections;
+$("test").onclick = testNotify;
+for (const k of ["timezone", "country", "history_days", "public_url"]) $(`g-${k}`).addEventListener("input", () => setDirty());
+window.addEventListener("beforeunload", (e) => { if (dirty) e.preventDefault(); });
+load().catch((e) => notice(`Could not load: ${e.message}`, "error"));
+</script>
+</body>
+</html>

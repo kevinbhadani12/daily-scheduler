@@ -5,8 +5,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from google.genai import errors, types
 
-from scheduler import generator
-from scheduler.config import load_config
+from scheduler import db, generator
 
 from . import fakes
 
@@ -14,9 +13,10 @@ NOW = datetime(2026, 10, 20, 7, 5, tzinfo=ZoneInfo("Asia/Kolkata"))
 
 
 def run(client, previous=()):
-    briefing = load_config().get("business")
+    briefing = db.get_briefing("business")
     with mock.patch.object(generator.genai, "Client", return_value=client):
-        return generator.generate(briefing, NOW, "IN", list(previous))
+        return generator.generate(briefing, NOW, "IN", list(previous),
+                                  model="gemini-3.8-flash", effort="high", api_key="k")
 
 
 def test_parses_briefing_and_summary():
@@ -36,7 +36,7 @@ def test_request_uses_search_tools_and_thinking_level():
     run(client, previous=[{"date": "2026-10-19", "headlines": ["Old story"]}])
     kwargs = client.models.generate_content.call_args.kwargs
     config = kwargs["config"]
-    assert kwargs["model"] == load_config().get("business").model
+    assert kwargs["model"] == "gemini-3.8-flash"
     assert [t.model_dump(exclude_none=True) for t in config.tools] == [{"google_search": {}}, {"url_context": {}}]
     assert config.thinking_config.thinking_level == types.ThinkingLevel.HIGH
     assert "2026-10-19: Old story" in kwargs["contents"]           # history is passed to avoid repeats
