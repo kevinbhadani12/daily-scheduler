@@ -1,4 +1,4 @@
-"""Asks Claude to research the web and write one briefing."""
+"""Asks Gemini to research the web (Google Search) and write one briefing."""
 from __future__ import annotations
 
 import json
@@ -6,24 +6,31 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 
-import anthropic
+from google import genai
+from google.genai import errors, types
 
 from .config import Briefing
 
-MAX_CONTINUATIONS = 8
+THINKING_LEVELS = {
+    "minimal": types.ThinkingLevel.MINIMAL,
+    "low": types.ThinkingLevel.LOW,
+    "medium": types.ThinkingLevel.MEDIUM,
+    "high": types.ThinkingLevel.HIGH,
+}
+BLOCKED_REASONS = {"SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII", "RECITATION"}
 
 SYSTEM_PROMPT = """\
 You write a daily briefing for one reader. Their instructions are in the user message; follow them closely.
 
-Today is {today} (timezone: {tz}).
+Today is {today} (timezone: {tz}).{country}
 
 How to work:
-- Use web_search to find what actually happened recently, mostly in the last 24-48 hours. Use web_fetch to read an article when a search snippet isn't enough to get the facts, numbers and dates right.
-- Every fact must come from a page you actually found. Link each source with its real URL, copied exactly. If you can't find reliable information on something, say so instead of guessing.
+- Use Google Search to find what actually happened recently, mostly in the last 24-48 hours. Read an article (URL context) when a search snippet isn't enough to get the facts, numbers and dates right.
+- Every fact must come from a page you actually found. Link each source with the article's real, full URL, copied exactly. Never make up or guess a URL. If you can't find reliable information on something, say so instead of guessing.
 - The user message ends with a list of stories already covered in recent briefings. Skip those unless something meaningfully new happened, and in that case say what changed.
 
 Output format:
-- Your final answer is the complete briefing in Markdown. Start it with a level-1 heading (# ...). Write nothing before that heading, such as notes about your searching.
+- Your final answer is the complete briefing in Markdown. Start it with a level-1 heading (# ...). Write nothing before that heading.
 - Use ## for main sections and ### for each story. Small Markdown tables are fine.
 - After the briefing, end with this block, exactly once:
 
@@ -62,18 +69,6 @@ def _user_message(briefing: Briefing, previous: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _final_text(content: list) -> str:
-    """Text written after the last tool call, which is the finished briefing."""
-    last_tool = -1
-    for i, block in enumerate(content):
-        if block.type not in ("text", "thinking", "redacted_thinking"):
-            last_tool = i
-    text = "".join(b.text for b in content[last_tool + 1:] if b.type == "text")
-    if not text.strip():
-        text = "".join(b.text for b in content if b.type == "text")
-    return text
-
-
 def _split_summary(text: str) -> tuple[str, dict]:
     match = re.search(r"<summary_json>\s*(\{.*?\})\s*</summary_json>", text, re.DOTALL)
     summary = {}
@@ -90,61 +85,77 @@ def _split_summary(text: str) -> tuple[str, dict]:
     return text.strip(), summary
 
 
-def _add_usage(total: dict, usage) -> None:
-    if usage is None:
-        return
-    for key in ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"):
-        total[key] = total.get(key, 0) + (getattr(usage, key, None) or 0)
-    server = getattr(usage, "server_tool_use", None)
-    if server is not None:
-        for key in ("web_search_requests", "web_fetch_requests"):
-            total[key] = total.get(key, 0) + (getattr(server, key, None) or 0)
+def _usage(response: types.GenerateContentResponse) -> dict:
+    usage = {}
+    meta = response.usage_metadata
+    if meta is not None:
+        for key in ("prompt_token_count", "candidates_token_count", "thoughts_token_count",
+                    "tool_use_prompt_token_count", "total_token_count"):
+            usage[key] = getattr(meta, key, None) or 0
+    grounding = response.candidates[0].grounding_metadata if response.candidates else None
+    if grounding is not None:
+        usage["search_queries"] = len(grounding.web_search_queries or [])
+    return usage
 
 
 def generate(briefing: Briefing, now: datetime, country: str | None, previous: list[dict]) -> Result:
-    client = anthropic.Anthropic()
+    client = genai.Client(  # reads GEMINI_API_KEY from the environment
+        http_options=types.HttpOptions(
+            timeout=15 * 60 * 1000,  # milliseconds; deep research can take several minutes
+            retry_options=types.HttpRetryOptions(attempts=3),
+        ),
+    )
 
-    search_tool = {"type": "web_search_20260209", "name": "web_search", "max_uses": briefing.max_searches}
-    if country:
-        search_tool["user_location"] = {"type": "approximate", "country": country, "timezone": str(now.tzinfo)}
-    tools = [search_tool, {"type": "web_fetch_20260209", "name": "web_fetch", "max_uses": briefing.max_fetches}]
+    system = SYSTEM_PROMPT.format(
+        today=now.strftime("%A, %d %B %Y"),
+        tz=now.tzinfo,
+        country=f"\nThe reader lives in country code {country}." if country else "",
+    )
+    config = types.GenerateContentConfig(
+        system_instruction=system,
+        tools=[
+            types.Tool(google_search=types.GoogleSearch()),
+            types.Tool(url_context=types.UrlContext()),
+        ],
+        thinking_config=types.ThinkingConfig(thinking_level=THINKING_LEVELS[briefing.effort]),
+    )
 
-    system = SYSTEM_PROMPT.format(today=now.strftime("%A, %d %B %Y"), tz=now.tzinfo)
-    messages = [{"role": "user", "content": _user_message(briefing, previous)}]
-    assistant_content: list = []
-    usage: dict = {}
-
-    for _ in range(MAX_CONTINUATIONS):
-        with client.beta.messages.stream(
+    try:
+        # The SDK automatically resumes long answers (finish reason CONTINUATION) and merges them
+        response = client.models.generate_content(
             model=briefing.model,
-            max_tokens=64000,
-            system=system,
-            messages=messages,
-            tools=tools,
-            output_config={"effort": briefing.effort},
-            betas=["server-side-fallback-2026-07-01"],
-            fallbacks="default",  # if the model declines, retry on Anthropic's recommended fallback model
-        ) as stream:
-            response = stream.get_final_message()
+            contents=_user_message(briefing, previous),
+            config=config,
+        )
+    except errors.ClientError as exc:
+        if exc.code == 429:
+            raise GenerationError(
+                "Gemini quota exceeded. Google Search only works on a paid key: open aistudio.google.com, "
+                "turn on billing for this API key's project, then try again. (If billing is already on, "
+                "you hit a rate limit; wait a few minutes.)") from exc
+        if exc.code in (400, 401, 403) and "key" in (exc.message or "").lower():
+            raise GenerationError(f"Your GEMINI_API_KEY was not accepted: {exc.message}") from exc
+        raise GenerationError(f"Gemini rejected the request ({exc.code}): {exc.message}") from exc
+    except errors.ServerError as exc:
+        raise GenerationError(f"Gemini server error ({exc.code}), try again later: {exc.message}") from exc
 
-        _add_usage(usage, response.usage)
-        assistant_content.extend(response.content)
+    if not response.candidates:
+        reason = getattr(response.prompt_feedback, "block_reason", None)
+        raise GenerationError(f"Gemini returned no answer (blocked: {reason}). Try rewording the prompt file.")
 
-        if response.stop_reason == "pause_turn":
-            # Long research turn: send the work so far back and let it continue
-            messages = messages[:1] + [{"role": "assistant", "content": assistant_content}]
-            continue
-        if response.stop_reason == "refusal":
-            raise GenerationError("The AI declined to write this briefing. Try rewording the prompt file.")
-        if response.stop_reason == "max_tokens":
-            raise GenerationError("The briefing was too long and got cut off. Ask for fewer stories in the prompt file.")
-        break
-    else:
-        raise GenerationError("The AI kept researching without finishing. Try lowering max_searches.")
+    candidate = response.candidates[0]
+    finish = candidate.finish_reason.name if candidate.finish_reason else "STOP"
+    if finish == "MAX_TOKENS":
+        raise GenerationError("The briefing was too long and got cut off. Ask for fewer stories in the prompt file.")
+    if finish in BLOCKED_REASONS:
+        raise GenerationError(f"Gemini stopped for safety reasons ({finish}). Try rewording the prompt file.")
 
-    markdown, summary = _split_summary(_final_text(assistant_content))
+    parts = candidate.content.parts if candidate.content and candidate.content.parts else []
+    text = "".join(p.text for p in parts if p.text and not p.thought)
+
+    markdown, summary = _split_summary(text)
     if len(markdown) < 200:
-        raise GenerationError("The AI returned an empty or very short briefing.")
+        raise GenerationError(f"Gemini returned an empty or very short briefing (finish reason: {finish}).")
 
     return Result(
         markdown=markdown,
@@ -152,5 +163,5 @@ def generate(briefing: Briefing, now: datetime, country: str | None, previous: l
         highlights=[str(h) for h in summary.get("highlights", [])][:3],
         mood=str(summary.get("mood", "")),
         headlines=[str(h) for h in summary.get("headlines", [])],
-        usage=usage,
+        usage=_usage(response),
     )

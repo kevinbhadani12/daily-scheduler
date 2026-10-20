@@ -1,0 +1,19 @@
+---
+description: Rules for the Gemini integration (research + writing of briefings)
+globs: scheduler/generator.py
+alwaysApply: false
+---
+
+- Use only the official `google-genai` SDK: `genai.Client()` and `client.models.generate_content(...)`.
+  The key comes from `GEMINI_API_KEY`.
+- Never guess SDK class/field names or model IDs. Inspect the installed SDK
+  (`.venv/bin/python -c "from google.genai import types; print(list(types.GenerateContentConfig.model_fields))"`)
+  or check ai.google.dev before using them.
+- Tools are `google_search` and `url_context`. Depth is controlled with `thinking_config.thinking_level`,
+  mapped from the config `effort` through `THINKING_LEVELS`.
+- Never include `part.thought` text in the briefing. The SDK auto-resumes `CONTINUATION`, so don't add a manual loop.
+- `SYSTEM_PROMPT` defines the `<summary_json>` contract (`title, highlights, mood, headlines`). `main.py` and
+  `scheduler/notify.py` depend on it. Change them together.
+- Every failure must become a `GenerationError` with a beginner-friendly message.
+- After changes run `.venv/bin/python -m pytest tests/test_generator.py tests/test_pipeline.py`.
+  Don't make real API calls without asking the user, because they cost money.

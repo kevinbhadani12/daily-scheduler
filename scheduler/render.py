@@ -123,7 +123,7 @@ def write_index(history: dict[str, list[dict]], names: dict[str, str]) -> None:
             f'<div><strong>{html.escape(item.get("title", ""))}</strong></div>'
             f'<div class="date">{html.escape(date)}</div></a>'
         )
-    body = "<h1>Your Daily Briefings</h1>" + (
+    body = '<p style="text-align:right"><a href="dashboard.html">⚙️ Settings</a></p><h1>Your Daily Briefings</h1>' + (
         f'<div class="list">{"".join(rows)}</div>' if rows else "<p>No briefings yet.</p>"
     )
     DOCS_DIR.mkdir(parents=True, exist_ok=True)

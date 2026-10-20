@@ -1,4 +1,4 @@
-anthropic>=1.0
+google-genai>=2.31
 requests>=2.32
 PyYAML>=6.0
 Markdown>=3.6

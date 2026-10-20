@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 50
     env:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       EMAIL_ADDRESS: ${{ secrets.EMAIL_ADDRESS }}
@@ -60,6 +60,7 @@ jobs:
             echo "Nothing new to publish."
           else
             git commit -m "Briefings $(TZ=Asia/Kolkata date +'%Y-%m-%d %H:%M')"
+            git pull --rebase   # in case settings were changed from the dashboard meanwhile
             git push
           fi
 

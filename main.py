@@ -19,13 +19,14 @@ import requests
 
 from scheduler import render, store
 from scheduler.config import ConfigError, Settings, load_config
-from scheduler.generator import generate
+from scheduler.generator import GenerationError, generate
 from scheduler.linkcheck import mark_dead_links
 from scheduler.notify import SENDERS, NotifyError
 
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    for env_file in (render.ROOT / ".env", render.ROOT / "scheduler" / ".env"):
+        load_dotenv(env_file)
 except ImportError:
     pass
 
@@ -106,7 +107,7 @@ def cmd_generate(settings: Settings, only: str | None, force: bool) -> int:
                 "mood": result.mood, "url": render.page_url(settings.site_url, briefing.id, today),
             })
             state[briefing.id]["status"] = "done"
-            log(f"  ✅ Saved {render.page_path(briefing.id, today).relative_to(render.ROOT)}")
+            log(f"  ✅ Saved {render.page_path(briefing.id, today)}")
         except Exception as exc:  # keep going with other briefings
             failures += 1
             state[briefing.id].update(status="failed", error=str(exc)[:500])
@@ -159,7 +160,11 @@ def cmd_notify() -> int:
 def cmd_preview(settings: Settings, briefing_id: str) -> int:
     briefing = settings.get(briefing_id)
     now = datetime.now(settings.timezone)
-    result, markdown = make_briefing(briefing, settings, now)
+    try:
+        result, markdown = make_briefing(briefing, settings, now)
+    except GenerationError as exc:
+        log(f"❌ {exc}")
+        return 1
     out = render.ROOT / "preview" / f"{briefing.id}-{now.date().isoformat()}.html"
     render.write_briefing_page(out, briefing.name, now.strftime("%A, %d %B %Y"), markdown, briefing.model)
     (out.with_suffix(".md")).write_text(markdown, encoding="utf-8")

@@ -1,0 +1,18 @@
+---
+description: Rules for the settings dashboard (single-file HTML/JS that edits config.yaml through the GitHub API)
+globs: docs/dashboard.html
+alwaysApply: false
+---
+
+- Single self-contained file, with no build step and no framework. Keep it that way.
+- Build DOM only with the `h()` helper and `textContent`. Never use `innerHTML` with data from the repo or the user.
+- External scripts only from cdnjs, with an exact version and an `integrity` (SRI) hash. If you change the version,
+  recompute the hash (`tests/test_dashboard.py` checks it).
+- The GitHub token lives only in `localStorage` (wrapped in try/catch) and is sent only to `api.github.com`.
+- `normalize()` reads config.yaml and `toYaml()` writes it. Every config field must round-trip exactly.
+  Quote strings with `q()` (e.g. country `NO` must not become `false`).
+  If you add a config field, also update `scheduler/config.py`, `config.yaml`, README and tests (AGENTS.md rule 1).
+- `MODELS` / `EFFORTS` must match what `scheduler/config.py` and `scheduler/generator.py` accept.
+- Everything the user reads must be plain, beginner-friendly English. Errors must say what to do next.
+- Must work at phone width (no horizontal scroll) and in dark mode (CSS variables in `:root`).
+- After changes run `.venv/bin/python -m pytest tests/test_dashboard.py`.

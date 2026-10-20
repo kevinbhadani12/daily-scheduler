@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 ALL_DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 WEEKDAYS = ALL_DAYS[:5]
 CHANNELS = {"telegram", "email"}
-EFFORTS = {"low", "medium", "high", "xhigh", "max"}
+EFFORTS = {"minimal", "low", "medium", "high"}
 
 
 class ConfigError(Exception):
@@ -30,8 +30,6 @@ class Briefing:
     enabled: bool
     model: str
     effort: str
-    max_searches: int
-    max_fetches: int
 
     @property
     def hour_minute(self) -> tuple[int, int]:
@@ -107,10 +105,8 @@ def load_config(path: Path = ROOT / "config.yaml") -> Settings:
             days=_parse_days(merged.get("days")),
             deliver=deliver,
             enabled=bool(merged.get("enabled", True)),
-            model=merged.get("model", "claude-opus-5-5"),
+            model=merged.get("model", "gemini-3.8-flash"),
             effort=effort,
-            max_searches=int(merged.get("max_searches", 25)),
-            max_fetches=int(merged.get("max_fetches", 15)),
         ))
 
     ids = [b.id for b in briefings]

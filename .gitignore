@@ -4,3 +4,5 @@ __pycache__/
 preview/
 .outbox.json
 .DS_Store
+.pytest_cache/
+qa/screenshots/
