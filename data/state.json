@@ -1,0 +1,8 @@
+{
+  "business": {
+    "date": "2026-10-20",
+    "status": "failed",
+    "attempts": 1,
+    "error": "No API key was provided. Please pass a valid API key. Learn how to create an API key at https://ai.google.dev/gemini-api/docs/api-key."
+  }
+}
