@@ -1,0 +1,6 @@
+.env
+.venv/
+__pycache__/
+preview/
+.outbox.json
+.DS_Store

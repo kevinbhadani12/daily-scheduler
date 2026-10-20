@@ -1,0 +1,43 @@
+# ─────────────────────────────────────────────────────────────
+#  Daily Scheduler – your settings
+#  Change times, add briefings, or switch them on/off here.
+#  No code changes needed.
+# ─────────────────────────────────────────────────────────────
+
+# Your timezone (all times below are in this timezone)
+timezone: Asia/Kolkata
+
+# Where the full briefing pages are published (GitHub Pages).
+# Replace YOUR-GITHUB-USERNAME after you create the repo.
+site_url: https://YOUR-GITHUB-USERNAME.github.io/daily-scheduler
+
+# Helps web search prefer news from your country (2-letter code)
+country: IN
+
+# How many past days of headlines to remember, so stories don't repeat
+history_days: 7
+
+# Default AI settings (each briefing can override these)
+defaults:
+  model: claude-opus-5-5
+  effort: high          # low | medium | high  (higher = more careful, costs more)
+  max_searches: 25      # web searches allowed per briefing
+  max_fetches: 15       # full articles the AI may open and read
+
+briefings:
+  - id: business                     # short name, used in links (no spaces)
+    name: Daily Business Briefing
+    prompt_file: briefings/business.md
+    time: "07:00"                    # 24-hour format, e.g. "07:00", "18:30"
+    days: daily                      # daily | weekdays | [mon, wed, fri]
+    deliver: [telegram, email]       # where to send the link
+    enabled: true
+
+  - id: stock-market
+    name: Stock Market Update
+    prompt_file: briefings/stock-market.md
+    time: "16:30"                    # after Indian market closes (3:30 PM)
+    days: weekdays
+    deliver: [telegram, email]
+    enabled: false                   # set to true to start receiving it
+    max_searches: 15
