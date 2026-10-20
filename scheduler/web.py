@@ -179,6 +179,7 @@ def create_app() -> Flask:
             settings=db.general_settings(), public_url=db.public_url(), secrets=db.secret_status(),
             briefings=[b.to_dict() for b in db.list_briefings()], runs=runs, issues=db.recent_issues(),
             models=db.MODELS, efforts=db.EFFORTS, days=db.ALL_DAYS, channels=db.CHANNELS,
+            research_modes=db.RESEARCH_MODES, paid_only_models=sorted(db.PAID_ONLY_MODELS),
             now=datetime.now(db.timezone()).strftime("%a %H:%M"),
         )
 

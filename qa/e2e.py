@@ -41,6 +41,9 @@ sent = []
 for channel in ("telegram", "email"):
     notify.SENDERS[channel] = (lambda ch: lambda item: sent.append((ch, item)))(channel)
 linkcheck._is_dead = lambda url: "dead" in url
+from tests.conftest import fake_fetch  # noqa: E402
+import scheduler.news as news_module  # noqa: E402
+news_module._fetch = fake_fetch
 gemini = mock.patch.object(generator.genai, "Client", return_value=fakes.client())
 gemini.start()
 web.time.sleep = lambda s: None
@@ -86,6 +89,8 @@ with sync_playwright() as p:
     check("setup logs you in to the dashboard", page.locator("#briefings > section").count() == 2)
     check("checklist asks for keys", "Add your Gemini API key" in page.inner_text("#checklist"))
     check("public address learned automatically", db.public_url() == BASE)
+    check("free mode is the default and explained", page.input_value("#g-research_mode") == "free"
+          and "No billing needed" in page.inner_text("#mode-help"))
     check("no sideways scroll on phone", no_sideways_scroll(page))
     page.screenshot(path=OUT / "2-dashboard-new.png", full_page=True)
 
@@ -121,7 +126,9 @@ with sync_playwright() as p:
     page.locator("input[type=time]").dispatch_event("change")
     page.locator("label.chip", has_text="Sat").click()
     page.locator("label.chip", has_text="Email").click()
-    page.locator("textarea").fill(page.locator("textarea").input_value() + "\nQA extra line.")
+    page.locator("textarea").first.fill(page.locator("textarea").first.input_value() + "\nQA extra line.")
+    check("news sources shown for the briefing", "economictimes" in page.locator("textarea.small").first.input_value())
+    page.locator("textarea.small").first.fill("https://www.livemint.com/rss/markets\nIndia electric vehicles")
     check("save bar appears", page.locator("#savebar").is_visible())
     page.screenshot(path=OUT / "3-edit.png", full_page=True)
 
@@ -132,18 +139,23 @@ with sync_playwright() as p:
     page.wait_for_selector(".notice.error")
     check("empty prompt refused with a clear message", "should contain" in notice(page), notice(page))
     check("nothing saved after an error", db.get_briefing("ai-tech-news") is None)
-    page.locator("textarea").last.fill("Every evening, explain the 3 biggest AI news stories simply.")
+    page.locator("textarea:not(.small)").last.fill("Every evening, explain the 3 biggest AI news stories simply.")
     stock = page.locator("#briefings > section", has_text="Stock Market Update")
     stock.locator(".b-head .info").click()
     page.once("dialog", lambda d: d.accept())
     stock.locator("button.danger").click()
+    page.select_option("#g-research_mode", "search")
+    check("mode help text updates", "needs billing" in page.inner_text("#mode-help"))
+    page.select_option("#g-research_mode", "free")
     page.fill("#g-public_url", "https://brief.example")
     page.locator("#g-public_url").dispatch_event("input")
     page.click("#save")
     page.wait_for_function("document.querySelector('#notice').innerText.includes('Saved')")
     b = db.get_briefing("business")
     check("edits saved", b.time == "06:30" and "sat" not in b.days and b.deliver == ["telegram"]
-          and b.prompt.endswith("QA extra line."))
+          and b.prompt.endswith("QA extra line.")
+          and b.sources == "https://www.livemint.com/rss/markets\nIndia electric vehicles")
+    check("new briefing gets its name as a news search", db.get_briefing("ai-tech-news").sources == "AI & Tech News")
     check("new briefing saved", db.get_briefing("ai-tech-news") is not None)
     check("deleted briefing gone", db.get_briefing("stock-market") is None)
     check("public address saved", db.public_url() == "https://brief.example")

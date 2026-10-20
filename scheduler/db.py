@@ -11,6 +11,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from .news import STARTER_SOURCES, parse_sources
+
 ROOT = Path(__file__).resolve().parent.parent
 TEMPLATES_DIR = ROOT / "briefings"
 
@@ -18,8 +20,15 @@ ALL_DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 CHANNELS = ["telegram", "email"]
 MODELS = [
     ("gemini-3.8-flash", "Gemini 3.8 Flash (recommended)"),
-    ("gemini-4-argon", "Gemini 4 Argon (best quality, ~3× price)"),
+    ("gemini-4-argon", "Gemini 4 Argon (best quality, needs billing)"),
     ("gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite (cheapest)"),
+]
+PAID_ONLY_MODELS = {"gemini-4-argon"}   # not on Gemini's free tier
+# When a model is overloaded (Gemini error 503), try this one instead
+BACKUP_MODELS = {"gemini-3.8-flash": "gemini-3.5-flash-lite", "gemini-4-argon": "gemini-3.8-flash"}
+RESEARCH_MODES = [
+    ("free", "Free: news feeds + Gemini free tier"),
+    ("search", "Google Search: deeper, needs Gemini billing"),
 ]
 EFFORTS = [("high", "High (most careful)"), ("medium", "Medium"), ("low", "Low"), ("minimal", "Minimal (fastest)")]
 
@@ -29,6 +38,7 @@ DEFAULT_SETTINGS = {
     "history_days": "7",
     "default_model": "gemini-3.8-flash",
     "default_effort": "high",
+    "research_mode": "free",
     "public_url": "",
 }
 # Keys can be typed into the dashboard, or set as environment variables (which win)
@@ -40,7 +50,8 @@ CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS briefings (
     id TEXT PRIMARY KEY, name TEXT NOT NULL, prompt TEXT NOT NULL, time TEXT NOT NULL,
     days TEXT NOT NULL, deliver TEXT NOT NULL, enabled INTEGER NOT NULL,
-    model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', position INTEGER NOT NULL DEFAULT 0);
+    model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', position INTEGER NOT NULL DEFAULT 0,
+    sources TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT, briefing_id TEXT NOT NULL, day TEXT NOT NULL,
     trigger TEXT NOT NULL, status TEXT NOT NULL, error TEXT NOT NULL DEFAULT '',
@@ -69,6 +80,7 @@ class Briefing:
     enabled: bool = True
     model: str = ""      # "" = use the default
     effort: str = ""
+    sources: str = ""    # free mode: one RSS feed URL or Google News search per line
 
     @property
     def hour_minute(self) -> tuple[int, int]:
@@ -100,11 +112,21 @@ def init() -> None:
     with connect() as conn:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.executescript(SCHEMA)
+        _migrate(conn)
         # A run that was in progress when the app stopped will never finish
         conn.execute("UPDATE runs SET status='failed', error='The app stopped while this was running.', "
                      "finished_at=started_at WHERE status='running'")
     if get_setting("seeded") != "1":
         _seed()
+
+
+def _migrate(conn) -> None:
+    """Upgrade databases made by older versions of the app."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(briefings)")}
+    if "sources" not in columns:
+        conn.execute("ALTER TABLE briefings ADD COLUMN sources TEXT NOT NULL DEFAULT ''")
+        for bid, sources in STARTER_SOURCES.items():
+            conn.execute("UPDATE briefings SET sources=? WHERE id=? AND sources=''", ("\n".join(sources), bid))
 
 
 def _seed() -> None:
@@ -117,6 +139,7 @@ def _seed() -> None:
         template = TEMPLATES_DIR / f"{b.id}.md"
         if template.exists():
             b.prompt = template.read_text(encoding="utf-8").strip()
+        b.sources = "\n".join(STARTER_SOURCES.get(b.id, []))
     save_briefings([b for b in starters if b.prompt])
     set_setting("seeded", "1")
 
@@ -187,6 +210,9 @@ def validate_settings(values: dict) -> dict:
     if values.get("default_effort") not in dict(EFFORTS):
         raise ValidationError("Pick a default thinking effort from the list.")
     clean["default_effort"] = values["default_effort"]
+    if values.get("research_mode", "free") not in dict(RESEARCH_MODES):
+        raise ValidationError("Pick a research mode from the list.")
+    clean["research_mode"] = values.get("research_mode", "free")
     url = str(values.get("public_url", "")).strip().rstrip("/")
     if url and not re.fullmatch(r"https?://[^\s]+", url):
         raise ValidationError("Public address must start with http:// or https://")
@@ -198,7 +224,7 @@ def validate_settings(values: dict) -> dict:
 def _row_to_briefing(row) -> Briefing:
     return Briefing(id=row["id"], name=row["name"], prompt=row["prompt"], time=row["time"],
                     days=json.loads(row["days"]), deliver=json.loads(row["deliver"]),
-                    enabled=bool(row["enabled"]), model=row["model"], effort=row["effort"])
+                    enabled=bool(row["enabled"]), model=row["model"], effort=row["effort"], sources=row["sources"])
 
 
 def list_briefings() -> list[Briefing]:
@@ -236,7 +262,12 @@ def validate_briefing(raw: dict) -> Briefing:
         raise ValidationError(f"{name}: unknown AI model {model!r}.")
     if effort and effort not in dict(EFFORTS):
         raise ValidationError(f"{name}: unknown thinking effort {effort!r}.")
-    return Briefing(bid, name, prompt, time, days, deliver, enabled, model, effort)
+    sources = parse_sources(str(raw.get("sources") or ""))
+    if len(sources) > 30:
+        raise ValidationError(f"{name}: use at most 30 news sources.")
+    if any(len(line) > 300 for line in sources):
+        raise ValidationError(f"{name}: a news source line is too long.")
+    return Briefing(bid, name, prompt, time, days, deliver, enabled, model, effort, "\n".join(sources))
 
 
 def save_briefings(briefings: list[Briefing]) -> None:
@@ -248,10 +279,10 @@ def save_briefings(briefings: list[Briefing]) -> None:
         conn.execute("DELETE FROM briefings")
         for position, b in enumerate(briefings):
             conn.execute(
-                "INSERT INTO briefings (id, name, prompt, time, days, deliver, enabled, model, effort, position) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO briefings (id, name, prompt, time, days, deliver, enabled, model, effort, position, "
+                "sources) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (b.id, b.name, b.prompt, b.time, json.dumps(b.days), json.dumps(b.deliver),
-                 int(b.enabled), b.model, b.effort, position))
+                 int(b.enabled), b.model, b.effort, position, b.sources))
 
 
 def effective_model(b: Briefing) -> str:

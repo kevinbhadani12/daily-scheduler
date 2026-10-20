@@ -32,6 +32,7 @@ input[type=text], input[type=password], input[type=time], input[type=number], se
   border-radius:8px; padding:9px 11px; }
 input:disabled { opacity:0.7; }
 textarea { min-height:260px; font-size:14px; line-height:1.5; resize:vertical; }
+textarea.small { min-height:120px; font-family:ui-monospace, Menlo, monospace; font-size:13px; }
 input:focus, select:focus, textarea:focus { outline:2px solid var(--accent); outline-offset:1px; }
 .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:14px; margin-bottom:14px; }
 .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
@@ -122,6 +123,9 @@ button:disabled { opacity:0.5; cursor:default; }
       <div><label for="g-country">Country code</label><input type="text" id="g-country" maxlength="2"></div>
       <div><label for="g-history_days">Remember stories for (days)</label><input type="number" id="g-history_days" min="1" max="60"></div>
     </div>
+    <label for="g-research_mode">How briefings find news</label>
+    <select id="g-research_mode"></select>
+    <p class="muted" id="mode-help" style="margin:6px 0 14px"></p>
     <div class="grid">
       <div><label for="g-default_model">Default AI model</label><select id="g-default_model"></select></div>
       <div><label for="g-default_effort">Default thinking effort</label><select id="g-default_effort"></select></div>
@@ -146,9 +150,12 @@ button:disabled { opacity:0.5; cursor:default; }
 "use strict";
 const CSRF = document.querySelector('meta[name="csrf"]').content;
 const DAY_LABEL = { mon: "Mon", tue: "Tue", wed: "Wed", thu: "Thu", fri: "Fri", sat: "Sat", sun: "Sun" };
-const GENERAL = ["timezone", "country", "history_days", "default_model", "default_effort", "public_url"];
+const MODE_HELP = {
+  free: "Free: the app collects today's news from each briefing's news sources, and Gemini's free tier explains it. No billing needed.",
+  search: "Google Search: Gemini searches the web itself. Deeper, but your Gemini key needs billing turned on.",
+};
 const CONNECTIONS = [
-  ["gemini_api_key", "Gemini API key", "password", "From aistudio.google.com/apikey (billing must be on)"],
+  ["gemini_api_key", "Gemini API key", "password", "From aistudio.google.com/apikey (free key is fine)"],
   ["telegram_bot_token", "Telegram bot token", "password", "From @BotFather"],
   ["telegram_chat_id", "Telegram chat id", "text", "Your chat number"],
   ["email_address", "Gmail address", "text", "you@gmail.com"],
@@ -235,6 +242,11 @@ function renderChecklist() {
   items.push([has("email_address") && has("email_app_password"), "Connect Gmail (address + app password)"]);
   const local = /\/\/(localhost|127\.|0\.0\.0\.0|192\.168\.|10\.)/.test(server.public_url);
   items.push([!local, "Links use a local address, so they only open on this network. Set a public address in General settings when you host it online."]);
+  if (server.settings.research_mode === "free") {
+    const paid = [server.settings.default_model, ...server.briefings.map((b) => b.model)]
+      .filter((m) => server.paid_only_models.includes(m));
+    items.push([!paid.length, `Free mode can't use ${paid[0]}. Pick Gemini 3.8 Flash in General settings or the briefing.`]);
+  }
   const missing = items.filter(([ok]) => !ok);
   $("checklist").classList.toggle("hidden", !missing.length);
   $("check-items").replaceChildren(...items.map(([ok, text]) => h("li", {}, `${ok ? "✅" : "⬜"} ${text}`)));
@@ -283,6 +295,9 @@ function briefingCard(b, index) {
   const textarea = h("textarea", { placeholder: "Write what this briefing should cover, in plain English…",
                                    oninput: (e) => { b.prompt = e.target.value; setDirty(); } });
   textarea.value = b.prompt;
+  const sources = h("textarea", { class: "small", placeholder: "One per line, e.g.\nhttps://www.livemint.com/rss/markets\nIndia electric vehicles",
+                                  oninput: (e) => { b.sources = e.target.value; setDirty(); } });
+  sources.value = b.sources || "";
 
   return h("section", { class: "card" }, head,
     h("div", { class: "b-body" },
@@ -306,6 +321,10 @@ function briefingCard(b, index) {
         h("div", {}, h("label", {}, "Thinking effort"),
           select(server.efforts, b.effort, (v) => update(() => { b.effort = v; }), ["", `Default (${cfg.settings.default_effort})`]))),
       h("label", {}, "What should this briefing contain?"), textarea,
+      h("div", { style: "height:14px" }),
+      h("label", {}, "News sources (used in Free mode)"), sources,
+      h("p", { class: "muted", style: "margin:4px 0 0" },
+        "One per line: a news site's RSS feed link, or search words (searched on Google News). Empty = search for the briefing's name."),
       h("div", { class: "row between", style: "margin-top:10px" },
         h("span", { class: "muted" }, `Briefing id: ${b.id}`),
         h("button", { class: "danger", onclick: () => removeBriefing(index) }, "Delete briefing"))));
@@ -314,8 +333,12 @@ function renderBriefings() { $("briefings").replaceChildren(...cfg.briefings.map
 
 function renderGeneral() {
   for (const k of ["timezone", "country", "history_days", "public_url"]) $(`g-${k}`).value = cfg.settings[k];
-  for (const [k, opts] of [["default_model", server.models], ["default_effort", server.efforts]]) {
-    const el = select(opts, cfg.settings[k], (v) => { cfg.settings[k] = v; setDirty(); renderBriefings(); });
+  $("mode-help").textContent = MODE_HELP[cfg.settings.research_mode] || "";
+  for (const [k, opts] of [["research_mode", server.research_modes], ["default_model", server.models], ["default_effort", server.efforts]]) {
+    const el = select(opts, cfg.settings[k], (v) => {
+      cfg.settings[k] = v; setDirty(); renderBriefings();
+      $("mode-help").textContent = MODE_HELP[cfg.settings.research_mode] || "";
+    });
     el.id = `g-${k}`;
     $(`g-${k}`).replaceWith(el);
   }
@@ -408,7 +431,7 @@ function addBriefing() {
   let id = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "briefing";
   while (cfg.briefings.some((b) => b.id === id)) id = `${id}-2`;
   cfg.briefings.push({ id, name: name.trim(), prompt: "", time: "08:00", days: [...server.days],
-                       deliver: [...server.channels], enabled: true, model: "", effort: "" });
+                       deliver: [...server.channels], enabled: true, model: "", effort: "", sources: name.trim() });
   open.add(id);
   setDirty();
   renderBriefings();

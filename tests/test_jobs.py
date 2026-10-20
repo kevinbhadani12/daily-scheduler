@@ -154,3 +154,83 @@ def test_tick_runs_due_briefings(monkeypatch):
 
 def test_catch_up_window_constant_is_sane():
     assert timedelta(hours=1) <= jobs.CATCH_UP <= timedelta(hours=6)
+
+
+# ── free mode vs Google Search mode ─────────────────────────
+def test_free_mode_sends_collected_news_and_no_google_search(gemini, sent):
+    client, _ = gemini
+    assert db.get_setting("research_mode") == "free"                       # free is the default
+    jobs.run_briefing("business", "manual")
+    kwargs = client.models.generate_content.call_args.kwargs
+    assert [t.model_dump(exclude_none=True) for t in kwargs["config"].tools] == [{"url_context": {}}]
+    assert "Today's news items (use only these):" in kwargs["contents"]
+    assert "https://news.example/rbi" in kwargs["contents"]
+    assert "cannot search the web" in kwargs["config"].system_instruction
+
+
+def test_search_mode_uses_google_search_and_no_feeds(gemini, sent):
+    client, _ = gemini
+    db.set_setting("research_mode", "search")
+    jobs.run_briefing("business", "manual")
+    kwargs = client.models.generate_content.call_args.kwargs
+    assert {"google_search": {}} in [t.model_dump(exclude_none=True) for t in kwargs["config"].tools]
+    assert "Today's news items" not in kwargs["contents"]
+
+
+def test_free_mode_refuses_paid_only_model(gemini, sent):
+    b = db.get_briefing("business")
+    b.model = "gemini-4-argon"
+    db.save_briefings([b])
+    result = jobs.run_briefing("business", "manual")
+    assert result["status"] == "failed" and "needs Gemini billing" in result["error"]
+
+
+def test_free_mode_with_no_news_explains(gemini, sent):
+    b = db.get_briefing("business")
+    b.sources = "https://empty.example/rss"
+    db.save_briefings([b])
+    result = jobs.run_briefing("business", "manual")
+    assert result["status"] == "failed" and "No recent news" in result["error"]
+
+
+def test_briefing_without_sources_searches_its_name(gemini, sent, monkeypatch):
+    asked = []
+    monkeypatch.setattr(jobs.news, "collect", lambda sources: asked.append(sources) or [
+        jobs.news.NewsItem("T", "https://n.example/1", "S", None, "", True)])
+    b = db.get_briefing("business")
+    b.sources = ""
+    db.save_briefings([b])
+    jobs.run_briefing("business", "manual")
+    assert asked == [["Daily Business Briefing"]]
+
+
+# ── overloaded model → backup model ─────────────────────────
+def _busy_error():
+    from google.genai import errors
+    return errors.ServerError(503, {"error": {"code": 503, "message": "high demand", "status": "UNAVAILABLE"}})
+
+
+def test_overloaded_model_switches_to_backup(gemini, sent):
+    client, _ = gemini
+    client.models.generate_content.side_effect = [_busy_error(), fakes.response()]
+    result = jobs.run_briefing("business", "manual")
+    assert result["status"] == "done"
+    models = [c.kwargs["model"] for c in client.models.generate_content.call_args_list]
+    assert models == ["gemini-3.8-flash", "gemini-3.5-flash-lite"]
+    assert db.recent_runs()[0]["usage"].count("gemini-3.5-flash-lite") == 1
+    assert "gemini-3.5-flash-lite" in db.get_issue(result["url"].rsplit("/", 1)[1])["html"]   # page says which model
+
+
+def test_backup_also_busy_gives_clear_message(gemini, sent):
+    client, _ = gemini
+    client.models.generate_content.side_effect = [_busy_error(), _busy_error()]
+    result = jobs.run_briefing("business", "manual")
+    assert result["status"] == "failed" and "overloaded" in result["error"]
+
+
+def test_free_mode_never_falls_back_to_paid_model(gemini, sent, monkeypatch):
+    client, _ = gemini
+    monkeypatch.setitem(db.BACKUP_MODELS, "gemini-3.8-flash", "gemini-4-argon")
+    client.models.generate_content.side_effect = [_busy_error()]
+    result = jobs.run_briefing("business", "manual")
+    assert result["status"] == "failed" and client.models.generate_content.call_count == 1

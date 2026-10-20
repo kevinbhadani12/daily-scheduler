@@ -90,3 +90,30 @@ def test_run_left_running_by_a_crash_is_marked_failed():
     db.init()
     run = db.runs_on("business", "2026-10-20")[0]
     assert run["id"] == run_id and run["status"] == "failed" and "stopped" in run["error"]
+
+
+def test_starter_briefings_have_news_sources():
+    assert "economictimes" in db.get_briefing("business").sources
+    assert "Sensex" in db.get_briefing("stock-market").sources
+
+
+def test_old_database_gets_sources_column(sandbox):
+    import sqlite3
+    path = db.data_dir() / "app.db"
+    path.unlink()
+    conn = sqlite3.connect(path)   # a database made by the previous version (no sources column)
+    conn.executescript(db.SCHEMA.replace(",\n    sources TEXT NOT NULL DEFAULT ''", ""))
+    conn.execute("INSERT INTO briefings (id, name, prompt, time, days, deliver, enabled) VALUES "
+                 "('business', 'B', 'p', '07:00', '[\"mon\"]', '[\"email\"]', 1)")
+    conn.execute("INSERT INTO settings VALUES ('seeded', '1')")
+    conn.commit(); conn.close()
+    db.init()
+    assert "livemint" in db.get_briefing("business").sources
+
+
+def test_research_mode_and_sources_validated():
+    with pytest.raises(db.ValidationError, match="research mode"):
+        db.validate_settings({**SETTINGS, "research_mode": "magic"})
+    with pytest.raises(db.ValidationError, match="at most 30"):
+        db.validate_briefing({**GOOD, "sources": "\n".join(f"s{i}" for i in range(31))})
+    assert db.validate_briefing({**GOOD, "sources": " a \n\n# c\nb "}).sources == "a\nb"

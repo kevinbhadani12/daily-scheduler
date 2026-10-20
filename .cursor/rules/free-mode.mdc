@@ -1,0 +1,16 @@
+---
+description: Keep the app free - Free mode (news feeds + Gemini free tier) is the default
+globs: scheduler/news.py, scheduler/generator.py, scheduler/jobs.py
+alwaysApply: false
+---
+
+- `research_mode` defaults to `"free"`: `news.py` collects RSS/Google News items, then Gemini gets **only** the
+  `url_context` tool. Never add `google_search` to free mode, and never make billing required for the default path.
+- Free Gemini key (checked 2026-10-20): text ✅, URL context ✅, Google Search ❌ 429. A Google AI Pro subscription
+  doesn't add API quota. Re-check with `.venv/bin/python qa/check_gemini.py`.
+- Models not on the free tier go in `db.PAID_ONLY_MODELS`.
+- 503 "high demand" is common on the free tier: `ModelBusy` → retry once with `db.BACKUP_MODELS` (free models only).
+- Feeds must give direct article links. Google News links are "headline only". Keep `MAX_AGE_HOURS` and
+  `MAX_READABLE` (20, the URL context limit). Test feeds with `qa/check_sources.py` before adding them.
+- Tests must not fetch real feeds: the `sandbox` fixture fakes `news._fetch`.
+- See AGENTS.md rules 2 and 6, and the `news-sources` / `check-gemini` skills.

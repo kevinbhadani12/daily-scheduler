@@ -5,8 +5,8 @@ import logging
 import threading
 from datetime import datetime, timedelta
 
-from . import db, render
-from .generator import GenerationError, generate
+from . import db, news, render
+from .generator import GenerationError, ModelBusy, generate
 from .linkcheck import mark_dead_links
 from .notify import SENDERS, NotifyError
 
@@ -68,6 +68,20 @@ def run_briefing(briefing_id: str, trigger: str = "manual") -> dict:
             _active.discard(briefing_id)
 
 
+def _collect_news(b: db.Briefing, model: str) -> str:
+    """Free mode: gather today's news from the briefing's sources for Gemini to work from."""
+    if model in db.PAID_ONLY_MODELS:
+        raise GenerationError(f"{model} needs Gemini billing. In free mode, pick Gemini 3.8 Flash "
+                              "(General settings or this briefing's AI model).")
+    sources = news.parse_sources(b.sources) or [b.name]   # no sources: search Google News for the name
+    items = news.collect(sources)
+    if not items:
+        raise GenerationError("No recent news was found in this briefing's news sources. Check the sources "
+                              "(one RSS feed link or search words per line) and the server's internet.")
+    log.info("Collected %d news items for '%s'", len(items), b.name)
+    return news.as_prompt(items)
+
+
 def _run(briefing_id: str, trigger: str) -> dict:
     b = db.get_briefing(briefing_id)
     if b is None:
@@ -82,9 +96,19 @@ def _run(briefing_id: str, trigger: str) -> dict:
         api_key = db.get_secret("gemini_api_key")
         if not api_key:
             raise GenerationError("The Gemini API key is missing. Add it in the dashboard under Connections.")
+        news_text = _collect_news(b, model) if db.get_setting("research_mode") == "free" else None
         since = (now.date() - timedelta(days=int(db.get_setting("history_days")))).isoformat()
-        result = generate(b, now, db.get_setting("country") or None, db.recent_headlines(b.id, since),
-                          model=model, effort=effort, api_key=api_key)
+        args = (b, now, db.get_setting("country") or None, db.recent_headlines(b.id, since))
+        try:
+            result = generate(*args, model=model, effort=effort, api_key=api_key, news_text=news_text)
+        except ModelBusy:
+            backup = db.BACKUP_MODELS.get(model)
+            if not backup or (news_text is not None and backup in db.PAID_ONLY_MODELS):
+                raise
+            log.info("%s is overloaded; trying %s instead", model, backup)
+            model = backup
+            result = generate(*args, model=model, effort=effort, api_key=api_key, news_text=news_text)
+        result.usage["model"] = model
         markdown, dead = mark_dead_links(result.markdown)
         if dead:
             log.info("Marked %d source link(s) that did not open", len(dead))

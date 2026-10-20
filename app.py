@@ -4,7 +4,8 @@
   python app.py list                 Show your briefings
   python app.py run business         Make one briefing now and send it (uses AI credit)
   python app.py reset-password       Set a new dashboard password
-  python app.py add ID --name "…" --prompt-file FILE [--time 08:00] [--days daily] [--deliver telegram,email]
+  python app.py add ID --name "…" --prompt-file FILE [--sources-file FILE] [--time 08:00] [--days daily]
+                                     [--deliver telegram,email]
 
 Settings via environment variables (all optional):
   PORT (8000), HOST (0.0.0.0), DATA_DIR (./data), PUBLIC_URL, ADMIN_PASSWORD, COOKIE_SECURE=1,
@@ -86,6 +87,7 @@ def add(args) -> int:
         "id": args.id, "name": args.name, "prompt": Path(args.prompt_file).read_text(encoding="utf-8"),
         "time": args.time, "days": db.ALL_DAYS if args.days == "daily" else db.ALL_DAYS[:5]
         if args.days == "weekdays" else args.days.split(","), "deliver": args.deliver.split(","), "enabled": True,
+        "sources": Path(args.sources_file).read_text(encoding="utf-8") if args.sources_file else "",
     })
     db.save_briefings([b for b in briefings if b.id != new.id] + [new])
     print(f"✅ Added '{new.name}' at {new.time}. Change it any time in the dashboard.")
@@ -105,6 +107,7 @@ def main() -> int:
     add_p.add_argument("id")
     add_p.add_argument("--name", required=True)
     add_p.add_argument("--prompt-file", required=True)
+    add_p.add_argument("--sources-file", help="news sources for Free mode, one per line")
     add_p.add_argument("--time", default="08:00")
     add_p.add_argument("--days", default="daily", help="daily, weekdays, or mon,wed,fri")
     add_p.add_argument("--deliver", default="telegram,email")
